@@ -2,6 +2,10 @@
 version: "1.0.0"
 ---
 
+[![CI](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml/badge.svg)](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml)
+
+> **CI:** Green badge = all checks passing on `main`. Red = see [Actions](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml).
+
 # Agentic Watering
 
 Home Assistant blueprint and YAML packages for **sequential AI-assisted irrigation**.

@@ -1,7 +1,10 @@
 # Agentic Watering for Home Assistant (HACS)
 
+[![CI](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml/badge.svg)](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![License](https://img.shields.io/github/license/zlatko-lakisic/hacs-agentic-watering)](LICENSE)
+
+> **CI status:** The badge above shows whether the latest `main` branch [passed all automated checks](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml). **Green** = HACS validation, Hassfest, package YAML syntax, and blueprint structure checks all succeeded. **Red** = at least one check failed — click the badge for logs.
 
 Sequential AI-assisted irrigation for Home Assistant: a reusable **blueprint** plus generic **script** and **REST command** packages. All site-specific zones, sensors, API keys, and runtime helpers are configured in your blueprint automation instance — nothing is hardcoded to a particular garden.
 
