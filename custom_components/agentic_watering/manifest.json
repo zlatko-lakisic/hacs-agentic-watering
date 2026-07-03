@@ -1,0 +1,11 @@
+{
+  "domain": "agentic_watering",
+  "name": "Agentic Watering",
+  "codeowners": ["@zlatko-lakisic"],
+  "documentation": "https://github.com/zlatko-lakisic/hacs-agentic-watering",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/zlatko-lakisic/hacs-agentic-watering/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}
