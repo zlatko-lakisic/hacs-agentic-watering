@@ -7,7 +7,7 @@
 [![CI](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml/badge.svg)](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml)
 [![GitHub release](https://img.shields.io/github/v/release/zlatko-lakisic/hacs-agentic-watering)](https://github.com/zlatko-lakisic/hacs-agentic-watering/releases)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-[![License](https://img.shields.io/github/license/zlatko-lakisic/hacs-agentic-watering)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > **CI status:** Green = [all checks passed](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml) on `main` (HACS validation, Hassfest, YAML + blueprint tests). Red = open Actions for logs.
 
