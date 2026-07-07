@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import voluptuous as vol
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
@@ -24,8 +25,9 @@ SERVICE_SCHEMA = vol.Schema(
 )
 
 
-async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register the integration; YAML packages are loaded via configuration.yaml includes."""
+def _register_services(hass: HomeAssistant) -> None:
+    if hass.services.has_service(DOMAIN, SERVICE_GET_WATER_REQUIREMENT_MM):
+        return
 
     async def handle_get_water_requirement_mm(call: ServiceCall) -> dict:
         result = resolve_water_requirement_mm(
@@ -47,4 +49,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         schema=SERVICE_SCHEMA,
         supports_response=True,
     )
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register services when loaded via configuration.yaml domain block."""
+    _register_services(hass)
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Register services when loaded via HACS config entry."""
+    _register_services(hass)
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload integration entry."""
+    if hass.services.has_service(DOMAIN, SERVICE_GET_WATER_REQUIREMENT_MM):
+        hass.services.async_remove(DOMAIN, SERVICE_GET_WATER_REQUIREMENT_MM)
     return True
