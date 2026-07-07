@@ -14,7 +14,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "agentic_watering"))
 
 from irrigation_prompt import (
     EAST_LAWN_PROFILE,
@@ -23,6 +23,15 @@ from irrigation_prompt import (
     hourly_precip,
     parse_minutes,
 )
+from plant_knowledge import format_knowledge_block, resolve_water_requirement_mm
+
+
+def _knowledge_block() -> str:
+    result = resolve_water_requirement_mm(
+        EAST_LAWN_PROFILE["plant_profile"],
+        climate_setting="temperate_humid",
+    )
+    return format_knowledge_block(result)
 
 
 @dataclass
@@ -54,8 +63,9 @@ def build_cases() -> list[Case]:
     def real_failure() -> str:
         hours = [0.0] * 48 + [42.4] + [0.0] * 23
         return build_user_prompt(
-            days_since="1.0",
+            days_since=2,
             last_run_minutes="10",
+            knowledge_block=_knowledge_block(),
             garden_temp_f=72.0,
             garden_peak_f=75.0,
             open_meteo=hourly_precip(hours),
@@ -66,6 +76,7 @@ def build_cases() -> list[Case]:
         return build_user_prompt(
             days_since="5.0",
             last_run_minutes="8",
+            knowledge_block=_knowledge_block(),
             garden_temp_f=85.0,
             garden_peak_f=88.0,
             open_meteo=hourly_precip([0.0] * 72),
@@ -77,6 +88,7 @@ def build_cases() -> list[Case]:
         return build_user_prompt(
             days_since="3.0",
             last_run_minutes="12",
+            knowledge_block=_knowledge_block(),
             garden_temp_f=80.0,
             garden_peak_f=82.0,
             open_meteo=hourly_precip(hours),
@@ -87,6 +99,7 @@ def build_cases() -> list[Case]:
         return build_user_prompt(
             days_since="4.0",
             last_run_minutes="10",
+            knowledge_block=_knowledge_block(),
             garden_temp_f=78.0,
             garden_peak_f=80.0,
             open_meteo=hourly_precip([0.0] * 72),
@@ -98,6 +111,7 @@ def build_cases() -> list[Case]:
         return build_user_prompt(
             days_since="2.0",
             last_run_minutes="9",
+            knowledge_block=_knowledge_block(),
             garden_temp_f=74.0,
             garden_peak_f=76.0,
             open_meteo=hourly_precip(hours),

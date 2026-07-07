@@ -162,6 +162,12 @@ script:
         required: true
         selector:
           text:
+      plant_knowledge_climate_setting:
+        name: Plant-knowledge climate_setting when live ET0 is unavailable
+        required: false
+        default: temperate_humid
+        selector:
+          text:
       ha_api_base_url:
         name: HA API base URL
         required: true
@@ -221,6 +227,7 @@ script:
         cfg_ha_token_helper: "{{ ha_api_token_helper | default('', true) | trim }}"
         cfg_llm_key_helper: "{{ llm_api_key_helper | default('', true) | trim }}"
         cfg_llm_url: "{{ llm_api_url | default('', true) | trim }}"
+        cfg_plant_knowledge_climate: "{{ plant_knowledge_climate_setting | default('temperate_humid', true) | trim }}"
         cfg_ha_api_base: "{{ (ha_api_base_url | default('http://127.0.0.1:8123', true) | trim) | regex_replace('/$', '') }}"
         cfg_irrigation_start: "{{ irrigation_start_service | default('', true) | trim }}"
         cfg_irrigation_stop: "{{ irrigation_stop_service | default('', true) | trim }}"
@@ -670,6 +677,12 @@ script:
             {% set meta = namespace(v=none, src='none') %}
             {% if bh | length > 0 %}
               {% set st_raw = state_attr(bh, 'start_time') %}
+              {% if not (st_raw is not none and st_raw | string | trim | length > 0 and st_raw | string | lower not in ['none', 'null', 'unknown', 'unavailable']) %}
+                {% set st_ent = states(bh) %}
+                {% if st_ent is not none and st_ent | string | trim | length > 0 and st_ent | string | lower not in ['none', 'null', 'unknown', 'unavailable'] %}
+                  {% set st_raw = st_ent %}
+                {% endif %}
+              {% endif %}
               {% set rt_raw = state_attr(bh, 'run_time') %}
               {% set prog_nm = state_attr(bh, 'program_name') %}
               {% set prog_ltr = state_attr(bh, 'program') %}
@@ -1105,23 +1118,45 @@ script:
               {% endif %}
             zone_probe_recommends_skip: >-
               {{ (zone_probe_skip_recommendation | default('', true) | trim).startswith('SKIP') }}
+        - action: agentic_watering.get_water_requirement_mm
+          continue_on_error: true
+          data:
+            name: "{{ repeat.item.plant_profile }}"
+            climate_setting: "{{ cfg_plant_knowledge_climate }}"
+          response_variable: zone_plant_knowledge_response
+        - variables:
             zone_days_since_last_irrigation: >-
+              {% set ns = namespace(days=none) %}
               {% set zctx = zone_context | default('[]', true) | trim %}
               {% set rows = zctx | from_json(default=[]) if zctx is string else (zctx if zctx is sequence else []) %}
-              {% set ns = namespace(out='unknown (no recorded last run)') %}
               {% for row in rows %}
                 {% if row is mapping and row.get('label') == repeat.item.label %}
                   {% set st = row.get('last_watering_start') %}
                   {% if st is not none and st | string | trim | length > 0 and st | string | lower not in ['none', 'null', 'unknown', 'unavailable'] %}
                     {% set dt = as_datetime(st) %}
                     {% if dt is not none %}
-                      {% set days = ((as_timestamp(now()) - as_timestamp(dt)) / 86400) | round(1) %}
-                      {% set ns.out = days | string %}
+                      {% set ns.days = (((as_timestamp(now()) - as_timestamp(dt)) / 86400) | round(0)) | int %}
                     {% endif %}
                   {% endif %}
                 {% endif %}
               {% endfor %}
-              {{ ns.out }}
+              {% if ns.days is none %}
+                {% set bh = repeat.item.zone_history_sensor | default('', true) | trim %}
+                {% if bh | length > 0 %}
+                  {% set st_attr = state_attr(bh, 'start_time') %}
+                  {% set st_ent = states(bh) %}
+                  {% set st_raw = st_attr if st_attr is not none and st_attr | string | trim | length > 0 and st_attr | string | lower not in ['none', 'null', 'unknown', 'unavailable'] else st_ent %}
+                  {% if st_raw is not none and st_raw | string | trim | length > 0 and st_raw | string | lower not in ['none', 'null', 'unknown', 'unavailable'] %}
+                    {% set dt2 = as_datetime(st_raw) %}
+                    {% if dt2 is not none %}
+                      {% set ns.days = (((as_timestamp(now()) - as_timestamp(dt2)) / 86400) | round(0)) | int %}
+                    {% endif %}
+                  {% endif %}
+                {% endif %}
+              {% endif %}
+              {{ ns.days if ns.days is not none else '' }}
+            zone_days_since_resolved: >-
+              {{ (zone_days_since_last_irrigation | default('', true) | string | trim) is match('^\\d+$') }}
             zone_last_run_duration_minutes: >-
               {% set zctx = zone_context | default('[]', true) | trim %}
               {% set rows = zctx | from_json(default=[]) if zctx is string else (zctx if zctx is sequence else []) %}
@@ -1134,289 +1169,403 @@ script:
                   {% endif %}
                 {% endif %}
               {% endfor %}
+              {% if ns.out == 'unknown' %}
+                {% set bh = repeat.item.zone_history_sensor | default('', true) | trim %}
+                {% set rt = state_attr(bh, 'run_time') if bh | length > 0 else none %}
+                {% if rt is not none and rt | string | trim | length > 0 and rt | string | lower not in ['none', 'null', 'unknown', 'unavailable'] %}
+                  {% set ns.out = rt | string %}
+                {% endif %}
+              {% endif %}
               {{ ns.out }}
+            zone_plant_knowledge_for_llm: >-
+              {% set raw = zone_plant_knowledge_response | default(none) %}
+              {% if raw is mapping %}
+                {{ raw }}
+              {% elif raw is string and raw | trim | length > 0 %}
+                {{ raw | trim | from_json(default={}) }}
+              {% else %}
+                {{ {} }}
+              {% endif %}
+            zone_plant_knowledge_block: >-
+              {% set pk = zone_plant_knowledge_for_llm if zone_plant_knowledge_for_llm is mapping else {} %}
+              {% if pk.get('knowledge_block') %}
+                {{ pk.knowledge_block }}
+              {% elif pk.get('found') and pk.get('weekly_need_mm') is not none %}
+                Knowledge base (plant-knowledge MCP): {{ pk.get('plant_name', repeat.item.plant_profile) }} — weekly water need ≈ {{ pk.weekly_need_mm }} mm at this ET₀ (plant_factor {{ pk.plant_factor }} × ET₀ {{ pk.et0_mm_per_week }} mm/week). Source: curated seed dataset, not full WUCOLS.
+              {% else %}
+                {{ '' }}
+              {% endif %}
+            zone_plant_knowledge_resolved: >-
+              {% set pk = zone_plant_knowledge_for_llm if zone_plant_knowledge_for_llm is mapping else {} %}
+              {{ (pk.get('resolved', false) | bool) or ((pk.get('found', false) | bool) and pk.get('weekly_need_mm') is not none) }}
             zone_llm_system_prompt: >-
-              You are the irrigation decision-maker for a residential garden zone. Your goal: keep the zone's plants healthy while never applying more water than they need. Overwatering wastes water and harms roots; underwatering stresses plants.
-
-              You will receive raw data: the zone profile (plant type, area, sun exposure, hardware and flow rate), hourly precipitation for the past 72 hours, current and forecast weather, and soil probe readings when available.
-
-              Reason step by step:
-              1. Estimate how much water this plant type needs per week in this season, and therefore what its current deficit is given days since last irrigation.
-              2. Total the effective recent rainfall. Treat any single-hour precipitation value that is wildly inconsistent with surrounding hours as a possible data artifact and say so.
-              3. If a soil probe reading is present, it overrides estimates: adequate moisture means do not water.
-              4. Check the forecast: imminent significant rain reduces or eliminates the need to water now.
-              5. Convert any remaining water need into minutes using the zone's hardware flow rate and area.
-
-              Zero is a normal and frequent correct answer — any time recent rainfall or soil moisture already covers the plant's needs, the answer is 0.
+              {% set lines = [
+                "You are the irrigation decision-maker for a residential garden zone. Your goal: keep the zone's plants healthy while never applying more water than they need. Overwatering wastes water and harms roots; underwatering stresses plants.",
+                "",
+                "You will receive raw data: the zone profile (plant type, area, sun exposure, hardware and flow rate), hourly precipitation for the past 72 hours, current and forecast weather, and soil probe readings when available.",
+                "",
+                "Reason step by step:",
+                "1. Estimate how much water this plant type needs per week in this season, and therefore what its current deficit is given days since last irrigation.",
+                "2. Total the effective recent rainfall. Treat any single-hour precipitation value that is wildly inconsistent with surrounding hours as a possible data artifact and say so.",
+                "3. If a soil probe reading is present, it overrides estimates: adequate moisture means do not water.",
+                "4. Check the forecast: imminent significant rain reduces or eliminates the need to water now.",
+                "5. Convert any remaining water need into minutes using the zone's hardware flow rate and area.",
+                "",
+                "Zero is a normal and frequent correct answer — any time recent rainfall or soil moisture already covers the plant's needs, the answer is 0."
+              ] %}
               {% if zone_has_soil_probe %}
-
-              Soil probe rules (when Soil moisture context shows has_soil_probe true):
-              - Soil moisture readings (0-100%, higher is wetter) override rainfall and deficit estimates when they indicate adequate moisture.
-              - Follow the adjustment_guide in Soil moisture context for plant-specific target ranges.
-              - Answer MINUTES: 0 when probe moisture is adequate for the plant type.
-              - A heuristic probe hint may appear in the user message; treat strong SKIP hints as MINUTES: 0.
+                {% set lines = lines + [
+                  "",
+                  "Soil probe rules (when Soil moisture context shows has_soil_probe true):",
+                  "- Soil moisture readings (0-100%, higher is wetter) override rainfall and deficit estimates when they indicate adequate moisture.",
+                  "- Follow the adjustment_guide in Soil moisture context for plant-specific target ranges.",
+                  "- Answer MINUTES: 0 when probe moisture is adequate for the plant type.",
+                  "- A heuristic probe hint may appear in the user message; treat strong SKIP hints as MINUTES: 0."
+                ] %}
               {% endif %}
-
-              Output format: your reasoning in at most 120 words, then a final line exactly:
-              MINUTES: <integer 0-25>
+              {% set lines = lines + [
+                "",
+                "Output format: your reasoning in at most 120 words, then a final line exactly:",
+                "MINUTES: <integer 0-25>"
+              ] %}
+              {{ lines | join('\n') }}
             zone_llm_prompt: >-
-              Zone label: {{ repeat.item.label }}
-              Zone entity: {{ repeat.item.entity_id }}
-
-              Zone profile: {{ repeat.item | to_json }}
-
-              Days since last irrigation: {{ zone_days_since_last_irrigation }}
-              Last run duration (minutes): {{ zone_last_run_duration_minutes }}
-
-              Garden temperature now (F): {{ ecowitt_temp_f | default('unknown', true) }}
-              Garden temperature 24h peak (F): {{ garden_heat_temp_f | default('unknown', true) }}
+              {% set user_lines = [
+                'Zone label: ' ~ repeat.item.label,
+                'Zone entity: ' ~ repeat.item.entity_id,
+                '',
+                'Zone profile: ' ~ (repeat.item | to_json),
+                '',
+                'Days since last irrigation: ' ~ zone_days_since_last_irrigation,
+                'Last run duration (minutes): ' ~ zone_last_run_duration_minutes,
+                '',
+                zone_plant_knowledge_block,
+                '',
+                'Garden temperature now (F): ' ~ (ecowitt_temp_f | default('unknown', true)),
+                'Garden temperature 24h peak (F): ' ~ (garden_heat_temp_f | default('unknown', true))
+              ] %}
               {% if zone_has_soil_probe %}
-              Heuristic probe hint: {{ zone_probe_skip_recommendation }}
+                {% set user_lines = user_lines + ['Heuristic probe hint: ' ~ zone_probe_skip_recommendation] %}
               {% endif %}
-              Soil moisture context: {{ zone_soil_for_llm }}
-              Open-Meteo past 72h precipitation: {{ open_meteo_past_rain_for_llm }}
-              AccuWeather context: {{ accuweather_forecast_for_llm }}
-              OpenWeatherMap forecast (next ~24h): {{ forecast_short }}
-        - variables:
-            zone_llm_payload: >-
-              {{
-                {
-                  'model': ollama_chat_model,
-                  'temperature': 0,
-                  'max_tokens': 500,
-                  'stream': false,
-                  'messages': [
-                    {'role': 'system', 'content': zone_llm_system_prompt},
-                    {'role': 'user', 'content': zone_llm_prompt}
-                  ]
-                } | to_json
-              }}
-        - service: rest_command.ollama_chat_completions
-          continue_on_error: true
-          data:
-            llm_api_url: "{{ cfg_llm_url }}"
-            llm_api_key_helper: "{{ cfg_llm_key_helper }}"
-            payload: '{{ zone_llm_payload }}'
-          response_variable: zone_llm_response
-        - variables:
-            zone_llm_http: '{{ zone_llm_response.status | default(-1) }}'
-            zone_llm_raw: >-
-              {% set raw = zone_llm_response.content | default(none) %}
-              {% set j = raw if raw is mapping else (raw | trim | from_json(default={}) if raw is string and raw | trim else {}) %}
-              {% if j is mapping and j.choices is defined and j.choices | count > 0 %}
-                {% set ch = j.choices[0] %}
-                {% if ch.message is mapping and ch.message.content is defined %}
-                  {{ ch.message.content | string }}
-                {% elif ch.text is defined %}
-                  {{ ch.text | string }}
-                {% else %}
-                  {{ '' }}
-                {% endif %}
-              {% else %}
-                {{ raw | string if raw is not none else '' }}
+              {% set user_lines = user_lines + [
+                'Soil moisture context: ' ~ zone_soil_for_llm,
+                'Open-Meteo past 72h precipitation: ' ~ open_meteo_past_rain_for_llm,
+                'AccuWeather context: ' ~ accuweather_forecast_for_llm,
+                'OpenWeatherMap forecast (next ~24h): ' ~ forecast_short
+              ] %}
+              {{ user_lines | join('\n') }}
+            zone_prompt_has_placeholder: >-
+              {% set blob = (zone_llm_system_prompt | default('', true) | string) ~ '\n' ~ (zone_llm_prompt | default('', true) | string) %}
+              {{ (blob | regex_search('<[^>]*FILL[^>]*>', ignorecase=True) is not none)
+                 or (blob | regex_search('\\{\\{', ignorecase=False) is not none)
+                 or (blob | regex_search('\\}\\}', ignorecase=False) is not none) }}
+            zone_prompt_assembly_ok: >-
+              {{ (zone_days_since_resolved | default(false) | bool)
+                 and (zone_plant_knowledge_resolved | default(false) | bool)
+                 and not (zone_prompt_has_placeholder | default(false) | bool) }}
+            zone_assembly_error: >-
+              {% set errs = namespace(parts=[]) %}
+              {% if not (zone_days_since_resolved | default(false) | bool) %}
+                {% set errs.parts = errs.parts + ['days_since_last_irrigation unresolved for ' ~ repeat.item.label] %}
               {% endif %}
-            llm_minutes_parsed: >-
-              {% set s = zone_llm_raw | default('', true) | string %}
-              {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
-              {% set ns = namespace(parsed=false) %}
-              {% for line in s.split('\n') | reverse %}
-                {% if not ns.parsed %}
-                  {% set t = line | trim %}
-                  {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
-                    {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
-                    {% if tail is match('^\\d+$') %}
-                      {% set ns.parsed = true %}
-                    {% endif %}
-                  {% endif %}
-                {% endif %}
-              {% endfor %}
-              {{ ns.parsed | bool }}
-            llm_minutes: >-
-              {% set s = zone_llm_raw | default('', true) | string %}
-              {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
-              {% set ns = namespace(v=none) %}
-              {% for line in s.split('\n') | reverse %}
-                {% if ns.v is none %}
-                  {% set t = line | trim %}
-                  {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
-                    {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
-                    {% if tail is match('^\\d+$') %}
-                      {% set ns.v = tail | int(0) %}
-                    {% endif %}
-                  {% endif %}
-                {% endif %}
-              {% endfor %}
-              {{ 0 if ns.v is none else ([0, [ns.v | int(0), 25] | min] | max) }}
-            llm_parse_retry_used: false
+              {% if not (zone_plant_knowledge_resolved | default(false) | bool) %}
+                {% set errs.parts = errs.parts + ['plant-knowledge MCP block missing for ' ~ repeat.item.plant_profile] %}
+              {% endif %}
+              {% if zone_prompt_has_placeholder | default(false) | bool %}
+                {% set errs.parts = errs.parts + ['unresolved template placeholder in assembled prompt'] %}
+              {% endif %}
+              {{ errs.parts | join('; ') }}
         - choose:
           - conditions:
               - condition: template
-                value_template: >-
-                  {{ not (llm_minutes_parsed | default(false) | bool)
-                     and zone_llm_http | int(-1) == 200 }}
+                value_template: "{{ not (zone_prompt_assembly_ok | default(false) | bool) }}"
             sequence:
-              - variables:
-                  zone_llm_payload: >-
-                    {{
-                      {
-                        'model': ollama_chat_model,
-                        'temperature': 0,
-                        'max_tokens': 500,
-                        'stream': false,
-                        'messages': [
-                          {'role': 'system', 'content': zone_llm_system_prompt},
-                          {'role': 'user', 'content': zone_llm_prompt ~ '\n\nYour previous reply did not include a valid final line. Restate your reasoning briefly, then end with exactly:\nMINUTES: <integer 0-25>'}
-                        ]
-                      } | to_json
-                    }}
-              - service: rest_command.ollama_chat_completions
-                continue_on_error: true
+              - action: logbook.log
                 data:
-                  llm_api_url: "{{ cfg_llm_url }}"
-                  llm_api_key_helper: "{{ cfg_llm_key_helper }}"
-                  payload: '{{ zone_llm_payload }}'
-                response_variable: zone_llm_response
+                  name: AI sequential watering
+                  entity_id: script.ai_sequential_watering
+                  message: >-
+                    Prompt assembly failed for {{ zone_label }} — {{ zone_assembly_error }}.
+                    Fail-closed: MINUTES 0, LLM not called.
               - variables:
-                  zone_llm_http: '{{ zone_llm_response.status | default(-1) }}'
-                  zone_llm_raw: >-
-                    {% set raw = zone_llm_response.content | default(none) %}
-                    {% set j = raw if raw is mapping else (raw | trim | from_json(default={}) if raw is string and raw | trim else {}) %}
-                    {% if j is mapping and j.choices is defined and j.choices | count > 0 %}
-                      {% set ch = j.choices[0] %}
-                      {% if ch.message is mapping and ch.message.content is defined %}
-                        {{ ch.message.content | string }}
-                      {% elif ch.text is defined %}
-                        {{ ch.text | string }}
-                      {% else %}
-                        {{ '' }}
-                      {% endif %}
-                    {% else %}
-                      {{ raw | string if raw is not none else '' }}
-                    {% endif %}
-                  llm_minutes_parsed: >-
-                    {% set s = zone_llm_raw | default('', true) | string %}
-                    {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
-                    {% set ns = namespace(parsed=false) %}
-                    {% for line in s.split('\n') | reverse %}
-                      {% if not ns.parsed %}
-                        {% set t = line | trim %}
-                        {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
-                          {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
-                          {% if tail is match('^\\d+$') %}
-                            {% set ns.parsed = true %}
-                          {% endif %}
-                        {% endif %}
-                      {% endif %}
-                    {% endfor %}
-                    {{ ns.parsed | bool }}
-                  llm_minutes: >-
-                    {% set s = zone_llm_raw | default('', true) | string %}
-                    {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
-                    {% set ns = namespace(v=none) %}
-                    {% for line in s.split('\n') | reverse %}
-                      {% if ns.v is none %}
-                        {% set t = line | trim %}
-                        {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
-                          {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
-                          {% if tail is match('^\\d+$') %}
-                            {% set ns.v = tail | int(0) %}
-                          {% endif %}
-                        {% endif %}
-                      {% endif %}
-                    {% endfor %}
-                    {{ 0 if ns.v is none else ([0, [ns.v | int(0), 25] | min] | max) }}
-                  llm_parse_retry_used: true
-        - variables:
-            run_minutes: >-
-              {% set lm = llm_minutes | int(0) %}
-              {% set probe_skip = zone_probe_recommends_skip | default(false) | bool %}
-              {% set parsed = llm_minutes_parsed | default(false) | bool %}
-              {% if probe_skip %}
-                0
-              {% elif not parsed %}
-                0
-              {% elif lm < 2 %}
-                0
-              {% else %}
-                {{ [2, [lm, 25] | min] | max }}
-              {% endif %}
-        - choose:
-          - conditions:
-              - condition: template
-                value_template: "{{ simulate_mode }}"
-            sequence:
-              - action: input_text.set_value
-                data:
-                  entity_id: '{{ cfg_simulate_report }}'
-                  value: >-
-                    {% set prev = states(cfg_simulate_report) | default('', true) %}
-                    {% set snip = zone_llm_raw | default('', true) | replace('\n', ' ') %}
-                    {% set snip2 = snip[:180] %}
-                    {% set lm0 = llm_minutes | int(0) %}
-                    {% set psk = ' probe-skip' if zone_probe_recommends_skip | default(false) | bool else '' %}
-                    {% set pfail = ' parse-fail' if not (llm_minutes_parsed | default(false) | bool) else '' %}
-                    {% set pretry = ' retry' if llm_parse_retry_used | default(false) | bool else '' %}
-                    {% set line = zone_label ~ ': ' ~ run_minutes ~ ' min (LLM ' ~ lm0 ~ psk ~ pfail ~ pretry ~ ') | HTTP ' ~ zone_llm_http ~ ' | ' ~ snip2 %}
-                    {% set max_len = 240 %}
-                    {% if repeat.index == 1 %}
-                    {{ line[:max_len] }}
-                    {% else %}
-                    {{ (prev ~ '\n' ~ line)[:max_len] }}
-                    {% endif %}
-        - choose:
-          - conditions:
-              - condition: template
-                value_template: "{{ run_minutes | int(0) < 1 }}"
-            sequence:
+                  zone_llm_http: "-1"
+                  zone_llm_raw: "assembly_error: {{ zone_assembly_error }}"
+                  llm_minutes_parsed: false
+                  llm_minutes: 0
+                  llm_parse_retry_used: false
+                  run_minutes: 0
               - choose:
                   - conditions:
                       - condition: template
-                        value_template: "{{ not simulate_mode }}"
+                        value_template: "{{ simulate_mode }}"
                     sequence:
-                      - action: input_number.set_value
+                      - action: input_text.set_value
                         data:
-                          entity_id: '{{ cfg_next_index }}'
-                          value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
+                          entity_id: '{{ cfg_simulate_report }}'
+                          value: >-
+                            {% set prev = states(cfg_simulate_report) | default('', true) %}
+                            {% set line = zone_label ~ ': 0 min (assembly-fail) | ' ~ zone_assembly_error %}
+                            {% set max_len = 240 %}
+                            {% if repeat.index == 1 %}
+                            {{ line[:max_len] }}
+                            {% else %}
+                            {{ (prev ~ '\n' ~ line)[:max_len] }}
+                            {% endif %}
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ run_minutes | int(0) < 1 }}"
+                    sequence:
+                      - choose:
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ not simulate_mode }}"
+                            sequence:
+                              - action: input_number.set_value
+                                data:
+                                  entity_id: '{{ cfg_next_index }}'
+                                  value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
           default:
+            - variables:
+                zone_llm_payload: >-
+                  {{
+                    {
+                      'model': ollama_chat_model,
+                      'temperature': 0,
+                      'max_tokens': 500,
+                      'stream': false,
+                      'messages': [
+                        {'role': 'system', 'content': zone_llm_system_prompt},
+                        {'role': 'user', 'content': zone_llm_prompt}
+                      ]
+                    } | to_json
+                  }}
+            - service: rest_command.ollama_chat_completions
+              continue_on_error: true
+              data:
+                llm_api_url: "{{ cfg_llm_url }}"
+                llm_api_key_helper: "{{ cfg_llm_key_helper }}"
+                payload: '{{ zone_llm_payload }}'
+              response_variable: zone_llm_response
+            - variables:
+                zone_llm_http: '{{ zone_llm_response.status | default(-1) }}'
+                zone_llm_raw: >-
+                  {% set raw = zone_llm_response.content | default(none) %}
+                  {% set j = raw if raw is mapping else (raw | trim | from_json(default={}) if raw is string and raw | trim else {}) %}
+                  {% if j is mapping and j.choices is defined and j.choices | count > 0 %}
+                    {% set ch = j.choices[0] %}
+                    {% if ch.message is mapping and ch.message.content is defined %}
+                      {{ ch.message.content | string }}
+                    {% elif ch.text is defined %}
+                      {{ ch.text | string }}
+                    {% else %}
+                      {{ '' }}
+                    {% endif %}
+                  {% else %}
+                    {{ raw | string if raw is not none else '' }}
+                  {% endif %}
+                llm_minutes_parsed: >-
+                  {% set s = zone_llm_raw | default('', true) | string %}
+                  {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
+                  {% set ns = namespace(parsed=false) %}
+                  {% for line in s.split('\n') | reverse %}
+                    {% if not ns.parsed %}
+                      {% set t = line | trim %}
+                      {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
+                        {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
+                        {% if tail is match('^\\d+$') %}
+                          {% set ns.parsed = true %}
+                        {% endif %}
+                      {% endif %}
+                    {% endif %}
+                  {% endfor %}
+                  {{ ns.parsed | bool }}
+                llm_minutes: >-
+                  {% set s = zone_llm_raw | default('', true) | string %}
+                  {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
+                  {% set ns = namespace(v=none) %}
+                  {% for line in s.split('\n') | reverse %}
+                    {% if ns.v is none %}
+                      {% set t = line | trim %}
+                      {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
+                        {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
+                        {% if tail is match('^\\d+$') %}
+                          {% set ns.v = tail | int(0) %}
+                        {% endif %}
+                      {% endif %}
+                    {% endif %}
+                  {% endfor %}
+                  {{ 0 if ns.v is none else ([0, [ns.v | int(0), 25] | min] | max) }}
+                llm_parse_retry_used: false
             - choose:
-                - conditions:
-                    - condition: template
-                      value_template: "{{ not simulate_mode }}"
-                  sequence:
-                    - if:
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ not (llm_minutes_parsed | default(false) | bool)
+                         and zone_llm_http | int(-1) == 200 }}
+                sequence:
+                  - variables:
+                      zone_llm_payload: >-
+                        {{
+                          {
+                            'model': ollama_chat_model,
+                            'temperature': 0,
+                            'max_tokens': 500,
+                            'stream': false,
+                            'messages': [
+                              {'role': 'system', 'content': zone_llm_system_prompt},
+                              {'role': 'user', 'content': zone_llm_prompt ~ '\n\nYour previous reply did not include a valid final line. Restate your reasoning briefly, then end with exactly:\nMINUTES: <integer 0-25>'}
+                            ]
+                          } | to_json
+                        }}
+                  - service: rest_command.ollama_chat_completions
+                    continue_on_error: true
+                    data:
+                      llm_api_url: "{{ cfg_llm_url }}"
+                      llm_api_key_helper: "{{ cfg_llm_key_helper }}"
+                      payload: '{{ zone_llm_payload }}'
+                    response_variable: zone_llm_response
+                  - variables:
+                      zone_llm_http: '{{ zone_llm_response.status | default(-1) }}'
+                      zone_llm_raw: >-
+                        {% set raw = zone_llm_response.content | default(none) %}
+                        {% set j = raw if raw is mapping else (raw | trim | from_json(default={}) if raw is string and raw | trim else {}) %}
+                        {% if j is mapping and j.choices is defined and j.choices | count > 0 %}
+                          {% set ch = j.choices[0] %}
+                          {% if ch.message is mapping and ch.message.content is defined %}
+                            {{ ch.message.content | string }}
+                          {% elif ch.text is defined %}
+                            {{ ch.text | string }}
+                          {% else %}
+                            {{ '' }}
+                          {% endif %}
+                        {% else %}
+                          {{ raw | string if raw is not none else '' }}
+                        {% endif %}
+                      llm_minutes_parsed: >-
+                        {% set s = zone_llm_raw | default('', true) | string %}
+                        {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
+                        {% set ns = namespace(parsed=false) %}
+                        {% for line in s.split('\n') | reverse %}
+                          {% if not ns.parsed %}
+                            {% set t = line | trim %}
+                            {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
+                              {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
+                              {% if tail is match('^\\d+$') %}
+                                {% set ns.parsed = true %}
+                              {% endif %}
+                            {% endif %}
+                          {% endif %}
+                        {% endfor %}
+                        {{ ns.parsed | bool }}
+                      llm_minutes: >-
+                        {% set s = zone_llm_raw | default('', true) | string %}
+                        {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
+                        {% set ns = namespace(v=none) %}
+                        {% for line in s.split('\n') | reverse %}
+                          {% if ns.v is none %}
+                            {% set t = line | trim %}
+                            {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
+                              {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
+                              {% if tail is match('^\\d+$') %}
+                                {% set ns.v = tail | int(0) %}
+                              {% endif %}
+                            {% endif %}
+                          {% endif %}
+                        {% endfor %}
+                        {{ 0 if ns.v is none else ([0, [ns.v | int(0), 25] | min] | max) }}
+                      llm_parse_retry_used: true
+            - variables:
+                run_minutes: >-
+                  {% set lm = llm_minutes | int(0) %}
+                  {% set probe_skip = zone_probe_recommends_skip | default(false) | bool %}
+                  {% set parsed = llm_minutes_parsed | default(false) | bool %}
+                  {% if probe_skip %}
+                    0
+                  {% elif not parsed %}
+                    0
+                  {% elif lm < 2 %}
+                    0
+                  {% else %}
+                    {{ [2, [lm, 25] | min] | max }}
+                  {% endif %}
+            - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ simulate_mode }}"
+                sequence:
+                  - action: input_text.set_value
+                    data:
+                      entity_id: '{{ cfg_simulate_report }}'
+                      value: >-
+                        {% set prev = states(cfg_simulate_report) | default('', true) %}
+                        {% set snip = zone_llm_raw | default('', true) | replace('\n', ' ') %}
+                        {% set snip2 = snip[:180] %}
+                        {% set lm0 = llm_minutes | int(0) %}
+                        {% set psk = ' probe-skip' if zone_probe_recommends_skip | default(false) | bool else '' %}
+                        {% set pfail = ' parse-fail' if not (llm_minutes_parsed | default(false) | bool) else '' %}
+                        {% set pretry = ' retry' if llm_parse_retry_used | default(false) | bool else '' %}
+                        {% set line = zone_label ~ ': ' ~ run_minutes ~ ' min (LLM ' ~ lm0 ~ psk ~ pfail ~ pretry ~ ') | HTTP ' ~ zone_llm_http ~ ' | ' ~ snip2 %}
+                        {% set max_len = 240 %}
+                        {% if repeat.index == 1 %}
+                        {{ line[:max_len] }}
+                        {% else %}
+                        {{ (prev ~ '\n' ~ line)[:max_len] }}
+                        {% endif %}
+            - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ run_minutes | int(0) < 1 }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ not simulate_mode }}"
+                        sequence:
+                          - action: input_number.set_value
+                            data:
+                              entity_id: '{{ cfg_next_index }}'
+                              value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
+              default:
+                - choose:
+                    - conditions:
                         - condition: template
-                          value_template: >-
-                            {{ zone_watering_entity not in ['', none]
-                               and states(zone_watering_entity) != 'unavailable' }}
-                      then:
-                        - action: '{{ cfg_irrigation_start }}'
-                          data:
-                            entity_id: '{{ zone_watering_entity }}'
-                            minutes: '{{ run_minutes | int(2) }}'
-                        - delay:
-                            hours: 0
-                            minutes: '{{ run_minutes | int(2) }}'
-                            seconds: 10
-                            milliseconds: 0
-                        - action: '{{ cfg_irrigation_stop }}'
-                          data:
-                            entity_id: '{{ zone_watering_entity }}'
-                        - delay:
-                            seconds: 45
-                        - action: input_number.set_value
-                          data:
-                            entity_id: '{{ cfg_next_index }}'
-                            value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
-                      else:
-                        - action: persistent_notification.create
-                          data:
-                            title: AI sequential watering — zone skipped
-                            message: >-
-                              Skipped {{ zone_label }} ({{ zone_entity }}{% if zone_watering_entity != zone_entity %}, tried {{ zone_watering_entity }}{% endif %}); valve state was {{ states(zone_watering_entity) }} (unavailable).
-                        - action: input_number.set_value
-                          data:
-                            entity_id: '{{ cfg_next_index }}'
-                            value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
+                          value_template: "{{ not simulate_mode }}"
+                      sequence:
+                        - if:
+                            - condition: template
+                              value_template: >-
+                                {{ zone_watering_entity not in ['', none]
+                                   and states(zone_watering_entity) != 'unavailable' }}
+                          then:
+                            - action: '{{ cfg_irrigation_start }}'
+                              data:
+                                entity_id: '{{ zone_watering_entity }}'
+                                minutes: '{{ run_minutes | int(2) }}'
+                            - delay:
+                                hours: 0
+                                minutes: '{{ run_minutes | int(2) }}'
+                                seconds: 10
+                                milliseconds: 0
+                            - action: '{{ cfg_irrigation_stop }}'
+                              data:
+                                entity_id: '{{ zone_watering_entity }}'
+                            - delay:
+                                seconds: 45
+                            - action: input_number.set_value
+                              data:
+                                entity_id: '{{ cfg_next_index }}'
+                                value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
+                          else:
+                            - action: persistent_notification.create
+                              data:
+                                title: AI sequential watering — zone skipped
+                                message: >-
+                                  Skipped {{ zone_label }} ({{ zone_entity }}{% if zone_watering_entity != zone_entity %}, tried {{ zone_watering_entity }}{% endif %}); valve state was {{ states(zone_watering_entity) }} (unavailable).
+                            - action: input_number.set_value
+                              data:
+                                entity_id: '{{ cfg_next_index }}'
+                                value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
     - choose:
       - conditions:
         - condition: template
