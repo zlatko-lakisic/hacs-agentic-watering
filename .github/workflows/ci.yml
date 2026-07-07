@@ -76,3 +76,18 @@ jobs:
 
       - name: Validate LICENSE contains MIT SPDX identifier
         run: python tests/validate_license.py
+
+  irrigation-parser:
+    name: Irrigation MINUTES parser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run parser unit tests
+        run: python -m unittest tests/test_parse_irrigation_minutes.py -v

@@ -9,7 +9,7 @@ rest_command:
 
   open_meteo_precipitation_past_24h:
     url: >-
-      https://api.open-meteo.com/v1/forecast?latitude={{ latitude }}&longitude={{ longitude }}&hourly=precipitation&past_hours=24&forecast_hours=0&timezone={{ timezone | urlencode }}
+      https://api.open-meteo.com/v1/forecast?latitude={{ latitude }}&longitude={{ longitude }}&hourly=precipitation&past_hours=72&forecast_hours=0&timezone={{ timezone | urlencode }}
     method: GET
     verify_ssl: true
     timeout: 30

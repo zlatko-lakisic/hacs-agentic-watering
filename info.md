@@ -1,5 +1,5 @@
 ---
-version: "1.0.1"
+version: "1.0.2"
 ---
 
 [![CI](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml/badge.svg)](https://github.com/zlatko-lakisic/hacs-agentic-watering/actions/workflows/ci.yml)

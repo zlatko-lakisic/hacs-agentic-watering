@@ -366,7 +366,7 @@ script:
               MQTT topic, API helpers/URLs, or irrigation services). Configure them in the blueprint automation.
         - stop: Incomplete watering configuration from blueprint
     - variables:
-        zones: '{{ zones_configured }}'
+        zones: "{{ zones_configured }}"
         ecowitt_temp: '{{ states(cfg_garden_temperature_sensor) }}'
         ecowitt_dewpoint: >-
           {% if cfg_garden_dewpoint_sensor | length > 0 %}
@@ -387,25 +387,34 @@ script:
           {% else %}
             {{ cfg_default_llm }}
           {% endif %}
-    - service: rest_command.openweathermap_5day_forecast
+    - variables:
+        owm_response: {}
+        meteo_past_response: {}
+        ha_history_response: {}
+        ha_valve_history_response: {}
+    - action: rest_command.openweathermap_5day_forecast
+      continue_on_error: true
       data:
         api_key: "{{ cfg_owm_key }}"
         latitude: "{{ cfg_latitude }}"
         longitude: "{{ cfg_longitude }}"
       response_variable: owm_response
-    - service: rest_command.open_meteo_precipitation_past_24h
+    - action: rest_command.open_meteo_precipitation_past_24h
+      continue_on_error: true
       data:
         latitude: "{{ cfg_latitude }}"
         longitude: "{{ cfg_longitude }}"
         timezone: "{{ cfg_timezone }}"
       response_variable: meteo_past_response
-    - service: rest_command.homeassistant_history_garden_24h
+    - action: rest_command.homeassistant_history_garden_24h
+      continue_on_error: true
       data:
         ha_api_base_url: "{{ cfg_ha_api_base }}"
         authorization: "{{ cfg_ha_auth }}"
         history_entity_ids: "{{ history_entity_ids }}"
       response_variable: ha_history_response
-    - service: rest_command.homeassistant_history_irrigation_valves
+    - action: rest_command.homeassistant_history_irrigation_valves
+      continue_on_error: true
       data:
         ha_api_base_url: "{{ cfg_ha_api_base }}"
         authorization: "{{ cfg_ha_auth }}"
@@ -419,7 +428,8 @@ script:
           {{ cfg_weather_entity | length > 0
              and states(cfg_weather_entity) not in ['unknown', 'unavailable', ''] }}
       then:
-        - service: weather.get_forecasts
+        - action: weather.get_forecasts
+          continue_on_error: true
           target:
             entity_id: "{{ cfg_weather_entity }}"
           data:
@@ -524,7 +534,7 @@ script:
               'hours': cnt,
               'precipitation_mm_sum': ns.total | round(3),
               'max_hourly_precipitation_mm': ns.mx | round(3),
-              'rained_in_past_24h_estimate': ns.total >= 0.1,
+              'rained_in_past_72h_estimate': ns.total >= 0.1,
               'hourly_mm': ns.hourly
             } | to_json
           }}
@@ -855,7 +865,7 @@ script:
           {% if m | length < (zone_count | int(1)) %}
           WARNING: baseline map incomplete ({{ m | length }} zones, expected {{ zone_count }}). Check ecowitt_temp / forecast_short inputs.
           {% endif %}
-          Baseline minutes (deterministic; per-zone LLM can adjust at runtime):
+          Harness deterministic estimate (operator reference only; not sent to the LLM):
           {{ ns.lines | join('\n') }}
         irrigation_start_summary: >-
           {% set raw = llm_zone_map | default(none) %}
@@ -989,11 +999,6 @@ script:
                 {% endif %}
               {% endif %}
             zone_index: '{{ (start_index_clamped | int(1) + repeat.index - 1) | int }}'
-            zone_baseline_clamped: >-
-              {% set mraw = llm_zone_map | default('{}', true) %}
-              {% set md = mraw | trim | from_json(default={}) if mraw is string else (mraw if mraw is mapping else {}) %}
-              {% set br = md.get(repeat.item.label, 10) | int(10) %}
-              {{ 0 if br < 2 else ([2, [br, 25] | min] | max) }}
             zone_soil_for_llm: >-
               {% set pri = repeat.item.soil_sensor | default('', true) | trim %}
               {% set sec = repeat.item.soil_sensor_secondary | default('', true) | trim %}
@@ -1025,7 +1030,7 @@ script:
               {% if ns.probes | length == 0 %}
                 {{ {'has_soil_probe': false} | to_json }}
               {% else %}
-                {% set guide = 'Soil probe is the PRIMARY decision signal (0-100%, higher = wetter). Probe overrides baseline when they disagree. REPLY 0 (skip) whenever moisture is adequate for plant_profile — do not water just because baseline > 0. Generic bands: very dry <=25% add 3-6 min; dry 26-35% add 1-3 min; comfortable 36-55% REPLY 0 unless plant target says otherwise; moist 56-65% REPLY 0 when within plant target max; wet >=66% always REPLY 0.' %}
+                {% set guide = 'Soil probe is the PRIMARY decision signal (0-100%, higher = wetter). Probe overrides rainfall and deficit estimates when moisture is adequate for plant_profile. Generic bands: very dry <=25% add 3-6 min; dry 26-35% add 1-3 min; comfortable 36-55% REPLY 0 unless plant target says otherwise; moist 56-65% REPLY 0 when within plant target max; wet >=66% always REPLY 0.' %}
                 {% if plants | regex_search('hosta|mint|flower') %}
                   {% set guide = guide ~ ' Ornamentals (hosta/mint/flowers): target ~40-68%. REPLY 0 when every probe is 40-68%.' %}
                 {% endif %}
@@ -1042,7 +1047,7 @@ script:
                   {% set guide = guide ~ ' Corn: target ~45-62%. REPLY 0 when every probe is 45-62%. Add only when any probe <32%.' %}
                 {% endif %}
                 {% if garden_heat_temp_f | float(0) >= 75 %}
-                  {% set guide = guide ~ ' Hot weather (garden heat signal >=75F): surface dries faster than probe depth — do not shorten below baseline when probe is 35-60%; only shorten or reply 0 when probe >=68% or heavy rain is forecast.' %}
+                  {% set guide = guide ~ ' Hot weather (garden heat signal >=75F): surface dries faster than probe depth — only add minutes when probes read dry for the plant type; reply 0 when probe >=68% or heavy rain is forecast.' %}
                 {% endif %}
                 {{ {
                   'has_soil_probe': true,
@@ -1056,7 +1061,7 @@ script:
             zone_probe_skip_recommendation: >-
               {% set ctx = zone_soil_for_llm | trim | from_json(default={}) %}
               {% if not ctx.get('has_soil_probe', false) %}
-              {{ 'none (no probe — use baseline/weather)' }}
+              {{ 'none (no probe)' }}
               {% else %}
               {% set probes = ctx.probes | default([]) %}
               {% set plants = repeat.item.plant_profile | default('', true) | lower %}
@@ -1071,7 +1076,7 @@ script:
                 {% endif %}
               {% endfor %}
               {% if vals.list | length == 0 %}
-              {{ 'unknown probe values — use baseline' }}
+              {{ 'unknown probe values' }}
               {% else %}
               {% set mn = vals.list | min %}
               {% set mx = vals.list | max %}
@@ -1100,25 +1105,76 @@ script:
               {% endif %}
             zone_probe_recommends_skip: >-
               {{ (zone_probe_skip_recommendation | default('', true) | trim).startswith('SKIP') }}
-            zone_llm_prompt: >-
-              Reply with ONLY one integer on a single line: 0, or any whole number from 2 to 25.
-              No words, no JSON, no markdown, no punctuation, no explanation.
-              Deterministic baseline for this zone (weather + soil heuristic, already rain-adjusted): {{ zone_baseline_clamped }} minutes (baseline is a fallback only — soil probe overrides when present).
-              Garden heat signal (max of live temp vs 24h peak): {{ garden_heat_temp_f }}°F.
+            zone_days_since_last_irrigation: >-
+              {% set zctx = zone_context | default('[]', true) | trim %}
+              {% set rows = zctx | from_json(default=[]) if zctx is string else (zctx if zctx is sequence else []) %}
+              {% set ns = namespace(out='unknown (no recorded last run)') %}
+              {% for row in rows %}
+                {% if row is mapping and row.get('label') == repeat.item.label %}
+                  {% set st = row.get('last_watering_start') %}
+                  {% if st is not none and st | string | trim | length > 0 and st | string | lower not in ['none', 'null', 'unknown', 'unavailable'] %}
+                    {% set dt = as_datetime(st) %}
+                    {% if dt is not none %}
+                      {% set days = ((as_timestamp(now()) - as_timestamp(dt)) / 86400) | round(1) %}
+                      {% set ns.out = days | string %}
+                    {% endif %}
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+              {{ ns.out }}
+            zone_last_run_duration_minutes: >-
+              {% set zctx = zone_context | default('[]', true) | trim %}
+              {% set rows = zctx | from_json(default=[]) if zctx is string else (zctx if zctx is sequence else []) %}
+              {% set ns = namespace(out='unknown') %}
+              {% for row in rows %}
+                {% if row is mapping and row.get('label') == repeat.item.label %}
+                  {% set dur = row.get('last_watering_duration_minutes') %}
+                  {% if dur is not none and dur | string | trim | length > 0 and dur | string | lower not in ['none', 'null', 'unknown', 'unavailable'] %}
+                    {% set ns.out = dur | string %}
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+              {{ ns.out }}
+            zone_llm_system_prompt: >-
+              You are the irrigation decision-maker for a residential garden zone. Your goal: keep the zone's plants healthy while never applying more water than they need. Overwatering wastes water and harms roots; underwatering stresses plants.
+
+              You will receive raw data: the zone profile (plant type, area, sun exposure, hardware and flow rate), hourly precipitation for the past 72 hours, current and forecast weather, and soil probe readings when available.
+
+              Reason step by step:
+              1. Estimate how much water this plant type needs per week in this season, and therefore what its current deficit is given days since last irrigation.
+              2. Total the effective recent rainfall. Treat any single-hour precipitation value that is wildly inconsistent with surrounding hours as a possible data artifact and say so.
+              3. If a soil probe reading is present, it overrides estimates: adequate moisture means do not water.
+              4. Check the forecast: imminent significant rain reduces or eliminates the need to water now.
+              5. Convert any remaining water need into minutes using the zone's hardware flow rate and area.
+
+              Zero is a normal and frequent correct answer — any time recent rainfall or soil moisture already covers the plant's needs, the answer is 0.
               {% if zone_has_soil_probe %}
-              SOIL PROBE RULE (mandatory): When Probe skip recommendation below starts with "SKIP", you MUST reply 0 even if baseline is higher. When probe moisture is within the plant-specific target range in adjustment_guide, reply 0 — do not water adequate soil. Only reply 2-25 when probes are below the plant minimum (dry) or Probe skip recommendation says WATER OK and driest probe is clearly dry.
-              Probe skip recommendation: {{ zone_probe_skip_recommendation }}
-              {% else %}
-              No soil moisture probe for this zone — use weather, plant profile, and baseline only. Reply 0 only if baseline is 0 or heavy recent rain makes irrigation unnecessary.
+
+              Soil probe rules (when Soil moisture context shows has_soil_probe true):
+              - Soil moisture readings (0-100%, higher is wetter) override rainfall and deficit estimates when they indicate adequate moisture.
+              - Follow the adjustment_guide in Soil moisture context for plant-specific target ranges.
+              - Answer MINUTES: 0 when probe moisture is adequate for the plant type.
+              - A heuristic probe hint may appear in the user message; treat strong SKIP hints as MINUTES: 0.
               {% endif %}
-              {% if garden_heat_temp_f | float(0) >= 75 %}
-              Hot spell (>=75F): you may reply baseline or +1-3 min ONLY when probes are dry (below plant minimum). Never override a SKIP recommendation or probe >=66% because of heat.
-              {% endif %}
+
+              Output format: your reasoning in at most 120 words, then a final line exactly:
+              MINUTES: <integer 0-25>
+            zone_llm_prompt: >-
               Zone label: {{ repeat.item.label }}
               Zone entity: {{ repeat.item.entity_id }}
+
               Zone profile: {{ repeat.item | to_json }}
+
+              Days since last irrigation: {{ zone_days_since_last_irrigation }}
+              Last run duration (minutes): {{ zone_last_run_duration_minutes }}
+
+              Garden temperature now (F): {{ ecowitt_temp_f | default('unknown', true) }}
+              Garden temperature 24h peak (F): {{ garden_heat_temp_f | default('unknown', true) }}
+              {% if zone_has_soil_probe %}
+              Heuristic probe hint: {{ zone_probe_skip_recommendation }}
+              {% endif %}
               Soil moisture context: {{ zone_soil_for_llm }}
-              Open-Meteo past 24h precipitation: {{ open_meteo_past_rain_for_llm }}
+              Open-Meteo past 72h precipitation: {{ open_meteo_past_rain_for_llm }}
               AccuWeather context: {{ accuweather_forecast_for_llm }}
               OpenWeatherMap forecast (next ~24h): {{ forecast_short }}
         - variables:
@@ -1127,10 +1183,10 @@ script:
                 {
                   'model': ollama_chat_model,
                   'temperature': 0,
-                  'max_tokens': 200,
+                  'max_tokens': 500,
                   'stream': false,
                   'messages': [
-                    {'role': 'system', 'content': 'Reply with exactly one integer: 0 or 2-25 inclusive. No other characters, words, or JSON. When a soil probe exists: reply 0 whenever probe moisture is within the plant-specific target range in adjustment_guide, or when Probe skip recommendation says SKIP. Probe overrides baseline — never reply minutes for adequate moisture. When garden heat signal >=75F, add time only if probes are below plant minimum; never water when any probe >=66% or SKIP applies.'},
+                    {'role': 'system', 'content': zone_llm_system_prompt},
                     {'role': 'user', 'content': zone_llm_prompt}
                   ]
                 } | to_json
@@ -1159,45 +1215,130 @@ script:
               {% else %}
                 {{ raw | string if raw is not none else '' }}
               {% endif %}
+            llm_minutes_parsed: >-
+              {% set s = zone_llm_raw | default('', true) | string %}
+              {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
+              {% set ns = namespace(parsed=false) %}
+              {% for line in s.split('\n') | reverse %}
+                {% if not ns.parsed %}
+                  {% set t = line | trim %}
+                  {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
+                    {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
+                    {% if tail is match('^\\d+$') %}
+                      {% set ns.parsed = true %}
+                    {% endif %}
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+              {{ ns.parsed | bool }}
             llm_minutes: >-
               {% set s = zone_llm_raw | default('', true) | string %}
               {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
               {% set ns = namespace(v=none) %}
-              {% if (s | length) > 0 and (s[0] == '{') %}
-                {% set p = s | from_json(default={}) %}
-                {% if p is mapping and p.minutes is defined %}
-                  {% set ns.v = p.minutes | int(0) %}
+              {% for line in s.split('\n') | reverse %}
+                {% if ns.v is none %}
+                  {% set t = line | trim %}
+                  {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
+                    {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
+                    {% if tail is match('^\\d+$') %}
+                      {% set ns.v = tail | int(0) %}
+                    {% endif %}
+                  {% endif %}
                 {% endif %}
-              {% endif %}
-              {% if ns.v is none and s is match('^\s*\d+\s*$') %}
-                {% set ns.v = s | int(0) %}
-              {% endif %}
-              {% if ns.v is none %}
-                {% set nums = s | regex_findall('\d+') %}
-                {% if nums | length > 0 %}
-                  {% set ns.v = nums[0] | int(0) %}
-                {% else %}
-                  {% set ns.v = 0 %}
-                {% endif %}
-              {% endif %}
-              {{ ns.v }}
+              {% endfor %}
+              {{ 0 if ns.v is none else ([0, [ns.v | int(0), 25] | min] | max) }}
+            llm_parse_retry_used: false
+        - choose:
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {{ not (llm_minutes_parsed | default(false) | bool)
+                     and zone_llm_http | int(-1) == 200 }}
+            sequence:
+              - variables:
+                  zone_llm_payload: >-
+                    {{
+                      {
+                        'model': ollama_chat_model,
+                        'temperature': 0,
+                        'max_tokens': 500,
+                        'stream': false,
+                        'messages': [
+                          {'role': 'system', 'content': zone_llm_system_prompt},
+                          {'role': 'user', 'content': zone_llm_prompt ~ '\n\nYour previous reply did not include a valid final line. Restate your reasoning briefly, then end with exactly:\nMINUTES: <integer 0-25>'}
+                        ]
+                      } | to_json
+                    }}
+              - service: rest_command.ollama_chat_completions
+                continue_on_error: true
+                data:
+                  llm_api_url: "{{ cfg_llm_url }}"
+                  llm_api_key_helper: "{{ cfg_llm_key_helper }}"
+                  payload: '{{ zone_llm_payload }}'
+                response_variable: zone_llm_response
+              - variables:
+                  zone_llm_http: '{{ zone_llm_response.status | default(-1) }}'
+                  zone_llm_raw: >-
+                    {% set raw = zone_llm_response.content | default(none) %}
+                    {% set j = raw if raw is mapping else (raw | trim | from_json(default={}) if raw is string and raw | trim else {}) %}
+                    {% if j is mapping and j.choices is defined and j.choices | count > 0 %}
+                      {% set ch = j.choices[0] %}
+                      {% if ch.message is mapping and ch.message.content is defined %}
+                        {{ ch.message.content | string }}
+                      {% elif ch.text is defined %}
+                        {{ ch.text | string }}
+                      {% else %}
+                        {{ '' }}
+                      {% endif %}
+                    {% else %}
+                      {{ raw | string if raw is not none else '' }}
+                    {% endif %}
+                  llm_minutes_parsed: >-
+                    {% set s = zone_llm_raw | default('', true) | string %}
+                    {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
+                    {% set ns = namespace(parsed=false) %}
+                    {% for line in s.split('\n') | reverse %}
+                      {% if not ns.parsed %}
+                        {% set t = line | trim %}
+                        {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
+                          {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
+                          {% if tail is match('^\\d+$') %}
+                            {% set ns.parsed = true %}
+                          {% endif %}
+                        {% endif %}
+                      {% endif %}
+                    {% endfor %}
+                    {{ ns.parsed | bool }}
+                  llm_minutes: >-
+                    {% set s = zone_llm_raw | default('', true) | string %}
+                    {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
+                    {% set ns = namespace(v=none) %}
+                    {% for line in s.split('\n') | reverse %}
+                      {% if ns.v is none %}
+                        {% set t = line | trim %}
+                        {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
+                          {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
+                          {% if tail is match('^\\d+$') %}
+                            {% set ns.v = tail | int(0) %}
+                          {% endif %}
+                        {% endif %}
+                      {% endif %}
+                    {% endfor %}
+                    {{ 0 if ns.v is none else ([0, [ns.v | int(0), 25] | min] | max) }}
+                  llm_parse_retry_used: true
+        - variables:
             run_minutes: >-
               {% set lm = llm_minutes | int(0) %}
-              {% set bc = zone_baseline_clamped | int(0) %}
               {% set probe_skip = zone_probe_recommends_skip | default(false) | bool %}
-              {% set has_probe = zone_has_soil_probe | default(false) | bool %}
-              {% set rec = zone_probe_skip_recommendation | default('', true) | trim %}
-              {% set water_ok = rec.startswith('WATER OK') %}
+              {% set parsed = llm_minutes_parsed | default(false) | bool %}
               {% if probe_skip %}
                 0
-              {% elif lm >= 2 %}
-                {{ [2, [lm, 25] | min] | max }}
-              {% elif has_probe and not water_ok %}
+              {% elif not parsed %}
                 0
-              {% elif bc >= 2 %}
-                {{ bc }}
+              {% elif lm < 2 %}
+                0
               {% else %}
-                0
+                {{ [2, [lm, 25] | min] | max }}
               {% endif %}
         - choose:
           - conditions:
@@ -1210,11 +1351,12 @@ script:
                   value: >-
                     {% set prev = states(cfg_simulate_report) | default('', true) %}
                     {% set snip = zone_llm_raw | default('', true) | replace('\n', ' ') %}
-                    {% set snip2 = snip[:220] %}
+                    {% set snip2 = snip[:180] %}
                     {% set lm0 = llm_minutes | int(0) %}
-                    {% set fb = ' fb' if lm0 < 2 and run_minutes | int(0) >= 2 else '' %}
                     {% set psk = ' probe-skip' if zone_probe_recommends_skip | default(false) | bool else '' %}
-                    {% set line = zone_label ~ ': ' ~ run_minutes ~ ' min' ~ fb ~ psk ~ ' (LLM ' ~ lm0 ~ ') | HTTP ' ~ zone_llm_http ~ ' | raw: ' ~ snip2 %}
+                    {% set pfail = ' parse-fail' if not (llm_minutes_parsed | default(false) | bool) else '' %}
+                    {% set pretry = ' retry' if llm_parse_retry_used | default(false) | bool else '' %}
+                    {% set line = zone_label ~ ': ' ~ run_minutes ~ ' min (LLM ' ~ lm0 ~ psk ~ pfail ~ pretry ~ ') | HTTP ' ~ zone_llm_http ~ ' | ' ~ snip2 %}
                     {% set max_len = 240 %}
                     {% if repeat.index == 1 %}
                     {{ line[:max_len] }}

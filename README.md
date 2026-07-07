@@ -45,7 +45,7 @@ Before you read the component list, confirm this fits your setup:
 |-----------|----------------|
 | Blueprint | `zlatko-lakisic/smart_sequential_watering.yaml` |
 | Script | `script.ai_sequential_watering` |
-| REST commands | `rest_command.openweathermap_5day_forecast`, `open_meteo_precipitation_past_24h`, `homeassistant_history_*`, `ollama_chat_completions` |
+| REST commands | `rest_command.openweathermap_5day_forecast`, `open_meteo_precipitation_past_24h` (72h window), `homeassistant_history_*`, `ollama_chat_completions` |
 
 Site-specific zones, sensors, API keys, and runtime helpers live in **your** blueprint instance and a small local instance package — nothing is hardcoded to one garden.
 
