@@ -240,3 +240,17 @@ Read result from `input_text.ai_watering_simulate_report`.
 - **2026-07-08 ~09:19 dawn simulate after plant-catalog removal:** assembly OK, LLM HTTP 200, **tool-call JSON parse-fail** still present.
 
 Primary remaining bug for valve actuation: **orchestrator/model output format for the HA chat-completions client.**
+## Status (2026-07-08)
+
+**Fixed on AI orchestrator** (repo `agentic-orchestration`, deployed to Jetson `ai-orchestrator.mostardesigns.com`):
+
+- Detect HA `MINUTES: <integer 0-25>` contracts as machine-readable.
+- Do **not** auto-attach `plant_knowledge` MCP (client has no tool loop).
+- Narrow `plant_knowledge` goal matching (`match_keywords_only`).
+- Clear any planner-selected MCP on these prompts.
+- Worker recovery kickoff if `MINUTES:` line is missing.
+- Live smoke: `HAS_TOOL_JSON False`, `HAS_MINUTES True` (East Lawn fixture → `MINUTES: 2`).
+
+Orchestrator commits: `8b2c155` … `328055f` (+ related). HA integration was **not** changed (plant knowledge stays removed).
+
+Re-run HA dawn simulate when ready; expect parseable `MINUTES:` lines instead of plant-knowledge tool JSON.
