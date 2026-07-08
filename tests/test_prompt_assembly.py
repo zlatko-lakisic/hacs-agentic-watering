@@ -53,6 +53,28 @@ class PromptAssemblyTests(unittest.TestCase):
         blob = "Days since last irrigation: <FILL IN — e.g. 2>"
         self.assertTrue(has_unresolved_placeholder(blob))
 
+    def test_placeholder_guard_ignores_nested_json(self) -> None:
+        blob = 'Open-Meteo past 72h precipitation: {"hourly_mm": [{"t": "2026-07-07T12:00", "mm": 0.0}]}'
+        self.assertFalse(has_unresolved_placeholder(blob))
+
+    def test_placeholder_guard_detects_unrendered_jinja(self) -> None:
+        blob = "Days since last irrigation: {{ days_since }}"
+        self.assertTrue(has_unresolved_placeholder(blob))
+
+    def test_corn_plant_profile_resolves(self) -> None:
+        pk = resolve_water_requirement_mm("24 corn plants", climate_setting="temperate_humid")
+        self.assertTrue(pk["found"], pk)
+        knowledge = format_knowledge_block(pk)
+        self.assertIn("plant-knowledge MCP", knowledge)
+        self.assertIn("Sweet corn", knowledge)
+
+    def test_mixed_veg_zone_resolves(self) -> None:
+        pk = resolve_water_requirement_mm(
+            "8 zucchini plants, 8 pea plants, and 8 eggplant plants",
+            climate_setting="temperate_humid",
+        )
+        self.assertTrue(pk["found"], pk)
+
 
 if __name__ == "__main__":
     unittest.main()

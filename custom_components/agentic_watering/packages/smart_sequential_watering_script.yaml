@@ -1189,11 +1189,15 @@ script:
             zone_plant_knowledge_block: >-
               {% set pk = zone_plant_knowledge_for_llm if zone_plant_knowledge_for_llm is mapping else {} %}
               {% if pk.get('knowledge_block') %}
-                {{ pk.knowledge_block }}
+              {{ pk.knowledge_block }}
               {% elif pk.get('found') and pk.get('weekly_need_mm') is not none %}
-                Knowledge base (plant-knowledge MCP): {{ pk.get('plant_name', repeat.item.plant_profile) }} — weekly water need ≈ {{ pk.weekly_need_mm }} mm at this ET₀ (plant_factor {{ pk.plant_factor }} × ET₀ {{ pk.et0_mm_per_week }} mm/week). Source: curated seed dataset, not full WUCOLS.
+              {% set pname = pk.get('plant_name', repeat.item.plant_profile) %}
+              {% set weekly = pk.weekly_need_mm %}
+              {% set factor = pk.plant_factor %}
+              {% set et0 = pk.et0_mm_per_week %}
+              Knowledge base (plant-knowledge MCP): {{ pname }} — weekly water need ≈ {{ weekly }} mm at this ET₀ (plant_factor {{ factor }} × ET₀ {{ et0 }} mm/week). Source: curated seed dataset, not full WUCOLS.
               {% else %}
-                {{ '' }}
+              {{ '' }}
               {% endif %}
             zone_plant_knowledge_resolved: >-
               {% set pk = zone_plant_knowledge_for_llm if zone_plant_knowledge_for_llm is mapping else {} %}
@@ -1254,11 +1258,15 @@ script:
                 'OpenWeatherMap forecast (next ~24h): ' ~ forecast_short
               ] %}
               {{ user_lines | join('\n') }}
+        - variables:
+            zone_prompt_blob: >-
+              {{ (zone_llm_system_prompt | default('', true) | trim) ~ '\n' ~ (zone_llm_prompt | default('', true) | trim) }}
+            zone_prompt_fill_match: >-
+              {{ zone_prompt_blob | regex_search('<[^>]*FILL[^>]*>', ignorecase=True) | default('', true) | trim }}
+            zone_prompt_jinja_match: >-
+              {{ zone_prompt_blob | regex_search('\\{\\{', ignorecase=False) | default('', true) | trim }}
             zone_prompt_has_placeholder: >-
-              {% set blob = (zone_llm_system_prompt | default('', true) | string) ~ '\n' ~ (zone_llm_prompt | default('', true) | string) %}
-              {{ (blob | regex_search('<[^>]*FILL[^>]*>', ignorecase=True) is not none)
-                 or (blob | regex_search('\\{\\{', ignorecase=False) is not none)
-                 or (blob | regex_search('\\}\\}', ignorecase=False) is not none) }}
+              {{ (zone_prompt_fill_match | length > 0) or (zone_prompt_jinja_match | length > 0) }}
             zone_prompt_assembly_ok: >-
               {{ (zone_days_since_resolved | default(false) | bool)
                  and (zone_plant_knowledge_resolved | default(false) | bool)

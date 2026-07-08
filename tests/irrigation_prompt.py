@@ -41,7 +41,7 @@ SYSTEM_PROMPT_LINES = [
 SYSTEM_PROMPT = "\n".join(SYSTEM_PROMPT_LINES)
 
 PLACEHOLDER_RE = re.compile(r"<[^>]*FILL[^>]*>", re.IGNORECASE)
-UNRENDERED_TEMPLATE_RE = re.compile(r"\{\{|\}\}")
+UNRENDERED_TEMPLATE_RE = re.compile(r"\{\{")
 
 
 def build_system_prompt(*, has_soil_probe: bool = False) -> str:

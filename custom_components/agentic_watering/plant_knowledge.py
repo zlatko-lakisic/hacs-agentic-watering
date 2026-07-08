@@ -59,6 +59,32 @@ def resolve_water_requirement_mm(
         for label in ("Tall fescue", "Kentucky bluegrass", "Perennial ryegrass"):
             if label not in candidates:
                 candidates.append(label)
+    if "corn" in plants_lower or "maize" in plants_lower:
+        candidates.append("Sweet corn")
+    if "tomato" in plants_lower:
+        candidates.append("Tomato")
+    if "zucchini" in plants_lower or "squash" in plants_lower:
+        candidates.append("Zucchini/Squash")
+    if "eggplant" in plants_lower:
+        candidates.append("Eggplant")
+    if "pea" in plants_lower and "pear" not in plants_lower:
+        candidates.append("Pea")
+    if "pepper" in plants_lower:
+        candidates.append("Pepper")
+    if "basil" in plants_lower:
+        candidates.append("Basil")
+    if "kale" in plants_lower:
+        candidates.append("Kale")
+    if "parsley" in plants_lower:
+        candidates.append("Parsley")
+    if "mint" in plants_lower:
+        candidates.append("Mint")
+    if "hosta" in plants_lower:
+        candidates.append("Hosta")
+    if "flower" in plants_lower or "bulb" in plants_lower or "ornamental" in plants_lower:
+        for label in ("Black-eyed Susan", "Daylily", "Purple coneflower"):
+            if label not in candidates:
+                candidates.append(label)
 
     seen: set[str] = set()
     for candidate in _rank_candidates(name, candidates):
