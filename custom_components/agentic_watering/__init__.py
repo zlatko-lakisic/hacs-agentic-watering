@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
 
 __all__ = ["DOMAIN"]
 
-# Optional YAML `agentic_watering:` block; packages live under homeassistant.packages.
-CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+# YAML may include empty `agentic_watering:` for package discovery; real script/REST
+# packages are loaded via homeassistant.packages includes.
+CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:

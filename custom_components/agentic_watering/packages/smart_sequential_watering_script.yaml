@@ -1313,7 +1313,7 @@ script:
                           value: >-
                             {% set prev = states(cfg_simulate_report) | default('', true) %}
                             {% set line = zone_label ~ ': 0 min (assembly-fail) | ' ~ zone_assembly_error %}
-                            {% set max_len = 240 %}
+                            {% set max_len = 2400 %}
                             {% if repeat.index == 1 %}
                             {{ line[:max_len] }}
                             {% else %}
@@ -1508,18 +1508,25 @@ script:
                       value: >-
                         {% set prev = states(cfg_simulate_report) | default('', true) %}
                         {% set snip = zone_llm_raw | default('', true) | replace('\n', ' ') %}
-                        {% set snip2 = snip[:180] %}
                         {% set lm0 = llm_minutes | int(0) %}
                         {% set psk = ' probe-skip' if zone_probe_recommends_skip | default(false) | bool else '' %}
                         {% set pfail = ' parse-fail' if not (llm_minutes_parsed | default(false) | bool) else '' %}
                         {% set pretry = ' retry' if llm_parse_retry_used | default(false) | bool else '' %}
-                        {% set line = zone_label ~ ': ' ~ run_minutes ~ ' min (LLM ' ~ lm0 ~ psk ~ pfail ~ pretry ~ ') | HTTP ' ~ zone_llm_http ~ ' | ' ~ snip2 %}
-                        {% set max_len = 240 %}
+                        {% set line = zone_label ~ ': ' ~ run_minutes ~ ' min (LLM ' ~ lm0 ~ psk ~ pfail ~ pretry ~ ') | HTTP ' ~ zone_llm_http ~ ' | ' ~ snip %}
+                        {% set max_len = 2400 %}
                         {% if repeat.index == 1 %}
                         {{ line[:max_len] }}
                         {% else %}
                         {{ (prev ~ '\n' ~ line)[:max_len] }}
                         {% endif %}
+            - action: logbook.log
+              data:
+                name: AI sequential watering
+                entity_id: script.ai_sequential_watering
+                message: >-
+                  Zone {{ zone_label }} LLM full response (HTTP {{ zone_llm_http }}, parsed={{ llm_minutes_parsed }}, minutes={{ llm_minutes }}, run={{ run_minutes }}):
+                  {{ zone_llm_raw | default('', true) | string }}
+
             - choose:
               - conditions:
                   - condition: template
