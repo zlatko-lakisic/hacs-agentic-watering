@@ -25,6 +25,8 @@ SYSTEM_PROMPT_LINES = [
     "",
     "You will receive raw data: the zone profile (plant type, area, sun exposure, hardware and flow rate), hourly precipitation for the past 72 hours, current and forecast weather, and soil probe readings when available.",
     "",
+    "Missing or unknown facts are provided with defaults like 0 or unknown. Use plant knowledge you already have for water requirements; Home Assistant only supplies sensor and zone facts.",
+    "",
     "Reason step by step:",
     "1. Estimate how much water this plant type needs per week in this season, and therefore what its current deficit is given days since last irrigation.",
     "2. Total the effective recent rainfall. Treat any single-hour precipitation value that is wildly inconsistent with surrounding hours as a possible data artifact and say so.",
@@ -63,36 +65,50 @@ def build_system_prompt(*, has_soil_probe: bool = False) -> str:
 
 def build_user_prompt(
     *,
-    days_since: str | int,
-    last_run_minutes: str,
-    knowledge_block: str,
-    garden_temp_f: float,
-    garden_peak_f: float,
-    open_meteo: dict[str, Any],
-    forecast_short: list[dict[str, Any]],
-    accuweather: str = "[]",
+    days_since: str | int = 0,
+    last_run_minutes: str | int = 0,
+    garden_temp_f: float | str = "unknown",
+    garden_peak_f: float | str = "unknown",
+    open_meteo: dict[str, Any] | None = None,
+    forecast_short: list[dict[str, Any]] | None = None,
+    accuweather: str | None = None,
     soil_context: dict[str, Any] | None = None,
     zone_profile: dict[str, Any] | None = None,
 ) -> str:
     profile = zone_profile or EAST_LAWN_PROFILE
     soil = soil_context or {"has_soil_probe": False}
+    meteo = open_meteo or {
+        "dataset": "open_meteo_hourly_grid",
+        "hours": 0,
+        "precipitation_mm_sum": 0,
+        "max_hourly_precipitation_mm": 0,
+        "rained_in_past_72h_estimate": False,
+        "hourly_mm": [],
+    }
+    owm = forecast_short if forecast_short is not None else []
+    weather = accuweather or json.dumps(
+        {
+            "weather_provider": "none",
+            "now_condition": "unknown",
+            "next_hours": [],
+            "precip_rate_in_per_h": "unknown",
+        }
+    )
     lines = [
-        f"Zone label: {profile['label']}",
-        f"Zone entity: {profile['entity_id']}",
+        f"Zone label: {profile.get('label') or 'unknown zone'}",
+        f"Zone entity: {profile.get('entity_id') or 'unknown'}",
         "",
         f"Zone profile: {json.dumps(profile)}",
         "",
         f"Days since last irrigation: {days_since}",
         f"Last run duration (minutes): {last_run_minutes}",
         "",
-        knowledge_block,
-        "",
         f"Garden temperature now (F): {garden_temp_f}",
         f"Garden temperature 24h peak (F): {garden_peak_f}",
         f"Soil moisture context: {json.dumps(soil)}",
-        f"Open-Meteo past 72h precipitation: {json.dumps(open_meteo)}",
-        f"AccuWeather context: {accuweather}",
-        f"OpenWeatherMap forecast (next ~24h): {json.dumps(forecast_short)}",
+        f"Open-Meteo past 72h precipitation: {json.dumps(meteo)}",
+        f"AccuWeather context: {weather}",
+        f"OpenWeatherMap forecast (next ~24h): {json.dumps(owm)}",
     ]
     return "\n".join(lines)
 

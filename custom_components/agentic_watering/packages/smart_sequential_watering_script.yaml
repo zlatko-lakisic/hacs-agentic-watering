@@ -162,12 +162,6 @@ script:
         required: true
         selector:
           text:
-      plant_knowledge_climate_setting:
-        name: Plant-knowledge climate_setting when live ET0 is unavailable
-        required: false
-        default: temperate_humid
-        selector:
-          text:
       ha_api_base_url:
         name: HA API base URL
         required: true
@@ -227,7 +221,6 @@ script:
         cfg_ha_token_helper: "{{ ha_api_token_helper | default('', true) | trim }}"
         cfg_llm_key_helper: "{{ llm_api_key_helper | default('', true) | trim }}"
         cfg_llm_url: "{{ llm_api_url | default('', true) | trim }}"
-        cfg_plant_knowledge_climate: "{{ plant_knowledge_climate_setting | default('temperate_humid', true) | trim }}"
         cfg_ha_api_base: "{{ (ha_api_base_url | default('http://127.0.0.1:8123', true) | trim) | regex_replace('/$', '') }}"
         cfg_irrigation_start: "{{ irrigation_start_service | default('', true) | trim }}"
         cfg_irrigation_stop: "{{ irrigation_stop_service | default('', true) | trim }}"
@@ -459,11 +452,11 @@ script:
               'rain_mm_3h': (f.rain['3h'] if f.rain is defined and f.rain['3h'] is defined else 0)
             }] %}
           {% endfor %}
-          {{ ns.items | to_json }}
+          {{ (ns.items | to_json) if ns.items | length > 0 else '[]' }}
         accuweather_forecast_for_llm: >-
           {% set wid = cfg_weather_entity | default('', true) | trim %}
-          {% if wid | length < 1 %}
-          {{ {'weather_provider': 'none'} | to_json }}
+          {% if wid | length < 1 or states(wid) in ['unknown', 'unavailable', ''] %}
+          {{ {'weather_provider': 'none', 'now_condition': 'unknown', 'next_hours': [], 'precip_rate_in_per_h': 'unknown'} | to_json }}
           {% else %}
           {% set cur = states(wid) %}
           {% set resp = accuweather_hourly_response | default({}, true) %}
@@ -498,12 +491,15 @@ script:
           {% endif %}
           {% set precip = 'unknown' %}
           {% if cfg_precipitation_sensor | length > 0 %}
-            {% set precip = states(cfg_precipitation_sensor) %}
+            {% set precip_raw = states(cfg_precipitation_sensor) %}
+            {% if precip_raw not in ['unknown', 'unavailable', 'none', ''] %}
+              {% set precip = precip_raw %}
+            {% endif %}
           {% endif %}
           {{
             {
               'weather_provider': wid,
-              'now_condition': cur,
+              'now_condition': cur if cur not in ['unknown', 'unavailable', ''] else 'unknown',
               'next_hours': ns.rows,
               'precip_rate_in_per_h': precip
             } | to_json
@@ -513,7 +509,7 @@ script:
           {% set raw = meteo_past_response.content | default('') %}
           {% set st = meteo_past_response.status | default(0) %}
           {% if st != 200 %}
-          {{ {'error': 'open_meteo_http_' ~ st} | to_json }}
+          {{ {'error': 'open_meteo_http_' ~ st, 'dataset': 'open_meteo_hourly_grid', 'hours': 0, 'precipitation_mm_sum': 0, 'max_hourly_precipitation_mm': 0, 'rained_in_past_72h_estimate': false, 'hourly_mm': []} | to_json }}
           {% else %}
           {% set j = raw if raw is mapping else (raw | trim | from_json(default={}) if raw is string and raw | trim else {}) %}
           {% set hourly = j.get('hourly', {}) if j is mapping else {} %}
@@ -1118,12 +1114,6 @@ script:
               {% endif %}
             zone_probe_recommends_skip: >-
               {{ (zone_probe_skip_recommendation | default('', true) | trim).startswith('SKIP') }}
-        - action: agentic_watering.get_water_requirement_mm
-          continue_on_error: true
-          data:
-            name: "{{ repeat.item.plant_profile }}"
-            climate_setting: "{{ cfg_plant_knowledge_climate }}"
-          response_variable: zone_plant_knowledge_response
         - variables:
             zone_days_since_last_irrigation: >-
               {% set ns = namespace(days=none) %}
@@ -1154,59 +1144,79 @@ script:
                   {% endif %}
                 {% endif %}
               {% endif %}
-              {{ ns.days if ns.days is not none else '' }}
-            zone_days_since_resolved: >-
-              {{ (zone_days_since_last_irrigation | default('', true) | string | trim) is match('^\\d+$') }}
+              {{ ns.days if ns.days is not none else 0 }}
             zone_last_run_duration_minutes: >-
               {% set zctx = zone_context | default('[]', true) | trim %}
               {% set rows = zctx | from_json(default=[]) if zctx is string else (zctx if zctx is sequence else []) %}
-              {% set ns = namespace(out='unknown') %}
+              {% set ns = namespace(out=none) %}
               {% for row in rows %}
                 {% if row is mapping and row.get('label') == repeat.item.label %}
                   {% set dur = row.get('last_watering_duration_minutes') %}
                   {% if dur is not none and dur | string | trim | length > 0 and dur | string | lower not in ['none', 'null', 'unknown', 'unavailable'] %}
-                    {% set ns.out = dur | string %}
+                    {% set ns.out = dur | float(0) | round(1) %}
                   {% endif %}
                 {% endif %}
               {% endfor %}
-              {% if ns.out == 'unknown' %}
+              {% if ns.out is none %}
                 {% set bh = repeat.item.zone_history_sensor | default('', true) | trim %}
                 {% set rt = state_attr(bh, 'run_time') if bh | length > 0 else none %}
                 {% if rt is not none and rt | string | trim | length > 0 and rt | string | lower not in ['none', 'null', 'unknown', 'unavailable'] %}
-                  {% set ns.out = rt | string %}
+                  {% set ns.out = rt | float(0) | round(1) %}
                 {% endif %}
               {% endif %}
-              {{ ns.out }}
-            zone_plant_knowledge_for_llm: >-
-              {% set raw = zone_plant_knowledge_response | default(none) %}
-              {% if raw is mapping %}
-                {{ raw }}
-              {% elif raw is string and raw | trim | length > 0 %}
-                {{ raw | trim | from_json(default={}) }}
-              {% else %}
-                {{ {} }}
-              {% endif %}
-            zone_plant_knowledge_block: >-
-              {% set pk = zone_plant_knowledge_for_llm if zone_plant_knowledge_for_llm is mapping else {} %}
-              {% if pk.get('knowledge_block') %}
-              {{ pk.knowledge_block }}
-              {% elif pk.get('found') and pk.get('weekly_need_mm') is not none %}
-              {% set pname = pk.get('plant_name', repeat.item.plant_profile) %}
-              {% set weekly = pk.weekly_need_mm %}
-              {% set factor = pk.plant_factor %}
-              {% set et0 = pk.et0_mm_per_week %}
-              Knowledge base (plant-knowledge MCP): {{ pname }} — weekly water need ≈ {{ weekly }} mm at this ET₀ (plant_factor {{ factor }} × ET₀ {{ et0 }} mm/week). Source: curated seed dataset, not full WUCOLS.
-              {% else %}
-              {{ '' }}
-              {% endif %}
-            zone_plant_knowledge_resolved: >-
-              {% set pk = zone_plant_knowledge_for_llm if zone_plant_knowledge_for_llm is mapping else {} %}
-              {{ (pk.get('resolved', false) | bool) or ((pk.get('found', false) | bool) and pk.get('weekly_need_mm') is not none) }}
+              {{ ns.out if ns.out is not none else 0 }}
+            zone_label_for_llm: >-
+              {% set v = repeat.item.label | default('', true) | trim %}
+              {{ v if v | length > 0 else 'unknown zone' }}
+            zone_entity_for_llm: >-
+              {% set v = repeat.item.entity_id | default('', true) | trim %}
+              {{ v if v | length > 0 else 'unknown' }}
+            zone_profile_for_llm: >-
+              {% set area = repeat.item.area_sqm | default(none, true) %}
+              {% set sun = repeat.item.sun_exposure | default('', true) | trim %}
+              {% set plants = repeat.item.plant_profile | default('', true) | trim %}
+              {% set hw = repeat.item.irrigation_hardware | default('', true) | trim %}
+              {% set flow = repeat.item.estimated_flow_gpm | default('', true) | trim %}
+              {% set notes = repeat.item.notes | default('', true) | trim %}
+              {{
+                {
+                  'label': zone_label_for_llm,
+                  'entity_id': zone_entity_for_llm,
+                  'area_sqm': area if area is not none and area | string | trim | length > 0 and area | string | lower not in ['none', 'null', 'unknown', 'unavailable'] else 'unknown',
+                  'sun_exposure': sun if sun | length > 0 else 'unknown',
+                  'plant_profile': plants if plants | length > 0 else 'unknown plants',
+                  'irrigation_hardware': hw if hw | length > 0 else 'unknown',
+                  'estimated_flow_gpm': flow if flow | length > 0 else 'unknown',
+                  'notes': notes if notes | length > 0 else 'none',
+                  'soil_sensor': repeat.item.soil_sensor | default('', true) | trim,
+                  'soil_sensor_secondary': repeat.item.soil_sensor_secondary | default('', true) | trim
+                } | to_json
+              }}
+            zone_temp_now_for_llm: >-
+              {% set t = ecowitt_temp | default('unknown', true) | string | trim %}
+              {{ t if t | length > 0 and t | lower not in ['unknown', 'unavailable', 'none', ''] else 'unknown' }}
+            zone_temp_peak_for_llm: >-
+              {% set t = garden_heat_temp_f | default('unknown', true) | string | trim %}
+              {{ t if t | length > 0 and t | lower not in ['unknown', 'unavailable', 'none', ''] else 'unknown' }}
+            zone_soil_context_for_llm: >-
+              {% set raw = zone_soil_for_llm | default('', true) | trim %}
+              {{ raw if raw | length > 0 else ({'has_soil_probe': false} | to_json) }}
+            zone_open_meteo_for_llm: >-
+              {% set raw = open_meteo_past_rain_for_llm | default('', true) | trim %}
+              {{ raw if raw | length > 0 else ({'error': 'open_meteo_unavailable', 'dataset': 'open_meteo_hourly_grid', 'hours': 0, 'precipitation_mm_sum': 0, 'max_hourly_precipitation_mm': 0, 'rained_in_past_72h_estimate': false, 'hourly_mm': []} | to_json) }}
+            zone_accuweather_for_llm: >-
+              {% set raw = accuweather_forecast_for_llm | default('', true) | trim %}
+              {{ raw if raw | length > 0 else ({'weather_provider': 'none', 'now_condition': 'unknown', 'next_hours': [], 'precip_rate_in_per_h': 'unknown'} | to_json) }}
+            zone_owm_forecast_for_llm: >-
+              {% set raw = forecast_short | default('', true) | trim %}
+              {{ raw if raw | length > 0 else '[]' }}
             zone_llm_system_prompt: >-
               {% set lines = [
                 "You are the irrigation decision-maker for a residential garden zone. Your goal: keep the zone's plants healthy while never applying more water than they need. Overwatering wastes water and harms roots; underwatering stresses plants.",
                 "",
                 "You will receive raw data: the zone profile (plant type, area, sun exposure, hardware and flow rate), hourly precipitation for the past 72 hours, current and forecast weather, and soil probe readings when available.",
+                "",
+                "Missing or unknown facts are provided with defaults like 0 or unknown. Use plant knowledge you already have for water requirements; Home Assistant only supplies sensor and zone facts.",
                 "",
                 "Reason step by step:",
                 "1. Estimate how much water this plant type needs per week in this season, and therefore what its current deficit is given days since last irrigation.",
@@ -1235,27 +1245,25 @@ script:
               {{ lines | join('\n') }}
             zone_llm_prompt: >-
               {% set user_lines = [
-                'Zone label: ' ~ repeat.item.label,
-                'Zone entity: ' ~ repeat.item.entity_id,
+                'Zone label: ' ~ zone_label_for_llm,
+                'Zone entity: ' ~ zone_entity_for_llm,
                 '',
-                'Zone profile: ' ~ (repeat.item | to_json),
+                'Zone profile: ' ~ zone_profile_for_llm,
                 '',
                 'Days since last irrigation: ' ~ zone_days_since_last_irrigation,
                 'Last run duration (minutes): ' ~ zone_last_run_duration_minutes,
                 '',
-                zone_plant_knowledge_block,
-                '',
-                'Garden temperature now (F): ' ~ (ecowitt_temp_f | default('unknown', true)),
-                'Garden temperature 24h peak (F): ' ~ (garden_heat_temp_f | default('unknown', true))
+                'Garden temperature now (F): ' ~ zone_temp_now_for_llm,
+                'Garden temperature 24h peak (F): ' ~ zone_temp_peak_for_llm
               ] %}
               {% if zone_has_soil_probe %}
-                {% set user_lines = user_lines + ['Heuristic probe hint: ' ~ zone_probe_skip_recommendation] %}
+                {% set user_lines = user_lines + ['Heuristic probe hint: ' ~ (zone_probe_skip_recommendation | default('none', true))] %}
               {% endif %}
               {% set user_lines = user_lines + [
-                'Soil moisture context: ' ~ zone_soil_for_llm,
-                'Open-Meteo past 72h precipitation: ' ~ open_meteo_past_rain_for_llm,
-                'AccuWeather context: ' ~ accuweather_forecast_for_llm,
-                'OpenWeatherMap forecast (next ~24h): ' ~ forecast_short
+                'Soil moisture context: ' ~ zone_soil_context_for_llm,
+                'Open-Meteo past 72h precipitation: ' ~ zone_open_meteo_for_llm,
+                'AccuWeather context: ' ~ zone_accuweather_for_llm,
+                'OpenWeatherMap forecast (next ~24h): ' ~ zone_owm_forecast_for_llm
               ] %}
               {{ user_lines | join('\n') }}
         - variables:
@@ -1268,21 +1276,13 @@ script:
             zone_prompt_has_placeholder: >-
               {{ (zone_prompt_fill_match | length > 0) or (zone_prompt_jinja_match | length > 0) }}
             zone_prompt_assembly_ok: >-
-              {{ (zone_days_since_resolved | default(false) | bool)
-                 and (zone_plant_knowledge_resolved | default(false) | bool)
-                 and not (zone_prompt_has_placeholder | default(false) | bool) }}
+              {{ not (zone_prompt_has_placeholder | default(false) | bool) }}
             zone_assembly_error: >-
-              {% set errs = namespace(parts=[]) %}
-              {% if not (zone_days_since_resolved | default(false) | bool) %}
-                {% set errs.parts = errs.parts + ['days_since_last_irrigation unresolved for ' ~ repeat.item.label] %}
-              {% endif %}
-              {% if not (zone_plant_knowledge_resolved | default(false) | bool) %}
-                {% set errs.parts = errs.parts + ['plant-knowledge MCP block missing for ' ~ repeat.item.plant_profile] %}
-              {% endif %}
               {% if zone_prompt_has_placeholder | default(false) | bool %}
-                {% set errs.parts = errs.parts + ['unresolved template placeholder in assembled prompt'] %}
+                unresolved template placeholder in assembled prompt
+              {% else %}
+                {{ '' }}
               {% endif %}
-              {{ errs.parts | join('; ') }}
         - choose:
           - conditions:
               - condition: template

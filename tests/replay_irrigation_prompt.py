@@ -17,21 +17,11 @@ from typing import Any, Callable
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "agentic_watering"))
 
 from irrigation_prompt import (
-    EAST_LAWN_PROFILE,
     SYSTEM_PROMPT,
     build_user_prompt,
     hourly_precip,
     parse_minutes,
 )
-from plant_knowledge import format_knowledge_block, resolve_water_requirement_mm
-
-
-def _knowledge_block() -> str:
-    result = resolve_water_requirement_mm(
-        EAST_LAWN_PROFILE["plant_profile"],
-        climate_setting="temperate_humid",
-    )
-    return format_knowledge_block(result)
 
 
 @dataclass
@@ -64,8 +54,7 @@ def build_cases() -> list[Case]:
         hours = [0.0] * 48 + [42.4] + [0.0] * 23
         return build_user_prompt(
             days_since=2,
-            last_run_minutes="10",
-            knowledge_block=_knowledge_block(),
+            last_run_minutes=10,
             garden_temp_f=72.0,
             garden_peak_f=75.0,
             open_meteo=hourly_precip(hours),
@@ -74,9 +63,8 @@ def build_cases() -> list[Case]:
 
     def drought() -> str:
         return build_user_prompt(
-            days_since="5.0",
-            last_run_minutes="8",
-            knowledge_block=_knowledge_block(),
+            days_since=5,
+            last_run_minutes=8,
             garden_temp_f=85.0,
             garden_peak_f=88.0,
             open_meteo=hourly_precip([0.0] * 72),
@@ -86,9 +74,8 @@ def build_cases() -> list[Case]:
     def partial_rain() -> str:
         hours = [0.0] * 47 + [8.0] + [0.0] * 24
         return build_user_prompt(
-            days_since="3.0",
-            last_run_minutes="12",
-            knowledge_block=_knowledge_block(),
+            days_since=3,
+            last_run_minutes=12,
             garden_temp_f=80.0,
             garden_peak_f=82.0,
             open_meteo=hourly_precip(hours),
@@ -97,9 +84,8 @@ def build_cases() -> list[Case]:
 
     def forecast_rain() -> str:
         return build_user_prompt(
-            days_since="4.0",
-            last_run_minutes="10",
-            knowledge_block=_knowledge_block(),
+            days_since=4,
+            last_run_minutes=10,
             garden_temp_f=78.0,
             garden_peak_f=80.0,
             open_meteo=hourly_precip([0.0] * 72),
@@ -109,9 +95,8 @@ def build_cases() -> list[Case]:
     def artifact_spike() -> str:
         hours = [0.3] * 35 + [32.4] + [0.4] * 36
         return build_user_prompt(
-            days_since="2.0",
-            last_run_minutes="9",
-            knowledge_block=_knowledge_block(),
+            days_since=2,
+            last_run_minutes=9,
             garden_temp_f=74.0,
             garden_peak_f=76.0,
             open_meteo=hourly_precip(hours),
