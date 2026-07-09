@@ -39,10 +39,13 @@ Create a local package (not part of this repo) with:
 
 - `input_boolean` / `input_number` / `input_text` helpers for run state
 - `input_text` helpers for API tokens (OpenWeatherMap, HA Recorder, LLM)
+- `input_text` for the per-zone run report (blueprint `simulate_report_text`) — keep `max: 255` (Home Assistant’s hard limit for `input_text`)
 - MQTT retained snapshot sensor on topic `homeassistant/ai_watering/active_run_config`
 - Optional resume-after-restart automation reading the snapshot sensor
 
 Point blueprint inputs at your helpers, zones, sensors, and irrigation services.
+
+The completion notification summarizes **actual per-zone LLM decisions** (compact lines such as `• East Lawn—0~p`). Set a long-lived access token on the HA Recorder API helper so 24h history reaches the model.
 
 ## 4. Create automations from the blueprint
 

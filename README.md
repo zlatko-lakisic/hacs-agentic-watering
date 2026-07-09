@@ -28,11 +28,11 @@ Before you read the component list, confirm this fits your setup:
 
 1. **Trigger** — Sunrise, sunset, or manual run via the blueprint automation.
 2. **Gather context** — OpenWeatherMap + Open-Meteo precipitation, Recorder history for soil sensors and valves, optional weather entity forecast.
-3. **Baseline plan** — Deterministic minutes per zone from temperature, rain, sun exposure, and soil bands.
-4. **Per-zone LLM call** — Model receives zone profile, probe readings, and history; replies with `0` (skip) or `2–25` minutes.
-5. **Water one zone** — Start/stop services run sequentially with a short delay between valves.
+3. **Baseline estimate** — Deterministic minutes per zone from temperature, rain, sun exposure, and soil bands (operator reference only; not what valves run).
+4. **Per-zone LLM call** — Model receives zone profile, probe readings, and history; replies with `0` (skip) or `2–25` minutes. Probe-skip rules can force `0` when soil moisture is already adequate.
+5. **Water one zone** — Start/stop services run sequentially with a short delay between valves (skipped in simulate mode).
 6. **Snapshot state** — `in_progress`, next zone index, and full run config published to MQTT (retained).
-7. **Next zone** — Repeat until the list is done; completion notification summarizes the run.
+7. **Next zone** — Repeat until the list is done; the **completion notification** lists each zone’s actual AI decision (minutes or skip reason) plus a legend — not the baseline estimate.
 
 <p align="center">
   <img src="images/blueprint-import.png" alt="Home Assistant blueprint import — Smart sequential watering" width="640">

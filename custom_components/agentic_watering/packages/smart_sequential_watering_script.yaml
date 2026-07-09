@@ -917,15 +917,10 @@ script:
             {% endif %}
           {% endfor %}
           {{ ns.items }}
-    - choose:
-      - conditions:
-        - condition: template
-          value_template: "{{ simulate_mode }}"
-        sequence:
-        - action: input_text.set_value
-          data:
-            entity_id: '{{ cfg_simulate_report }}'
-            value: ""
+    - action: input_text.set_value
+      data:
+        entity_id: '{{ cfg_simulate_report }}'
+        value: ""
     - choose:
       - conditions:
         - condition: template
@@ -978,15 +973,6 @@ script:
           data:
             entity_id: '{{ cfg_next_index }}'
             value: "{{ start_index_clamped | int(1) }}"
-        - action: persistent_notification.create
-          data:
-            title: Sequential watering started
-            message: >-
-              {% if start_index_clamped | int(1) > 1 %}
-              Resuming interrupted run at zone index {{ start_index_clamped }}.
-
-              {% endif %}
-              {{ irrigation_start_summary }}
     - repeat:
         for_each: '{{ pending_zones }}'
         sequence:
@@ -1008,6 +994,7 @@ script:
                 {% endif %}
               {% endif %}
             zone_index: '{{ (start_index_clamped | int(1) + repeat.index - 1) | int }}'
+            zone_report_extra: ''
             zone_soil_for_llm: >-
               {% set pri = repeat.item.soil_sensor | default('', true) | trim %}
               {% set sec = repeat.item.soil_sensor_secondary | default('', true) | trim %}
@@ -1305,23 +1292,6 @@ script:
               - choose:
                   - conditions:
                       - condition: template
-                        value_template: "{{ simulate_mode }}"
-                    sequence:
-                      - action: input_text.set_value
-                        data:
-                          entity_id: '{{ cfg_simulate_report }}'
-                          value: >-
-                            {% set prev = states(cfg_simulate_report) | default('', true) %}
-                            {% set line = zone_label ~ ': 0 min (assembly-fail) | ' ~ zone_assembly_error %}
-                            {% set max_len = 2400 %}
-                            {% if repeat.index == 1 %}
-                            {{ line[:max_len] }}
-                            {% else %}
-                            {{ (prev ~ '\n' ~ line)[:max_len] }}
-                            {% endif %}
-              - choose:
-                  - conditions:
-                      - condition: template
                         value_template: "{{ run_minutes | int(0) < 1 }}"
                     sequence:
                       - choose:
@@ -1497,28 +1467,6 @@ script:
                   {% else %}
                     {{ [2, [lm, 25] | min] | max }}
                   {% endif %}
-            - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ simulate_mode }}"
-                sequence:
-                  - action: input_text.set_value
-                    data:
-                      entity_id: '{{ cfg_simulate_report }}'
-                      value: >-
-                        {% set prev = states(cfg_simulate_report) | default('', true) %}
-                        {% set snip = zone_llm_raw | default('', true) | replace('\n', ' ') %}
-                        {% set lm0 = llm_minutes | int(0) %}
-                        {% set psk = ' probe-skip' if zone_probe_recommends_skip | default(false) | bool else '' %}
-                        {% set pfail = ' parse-fail' if not (llm_minutes_parsed | default(false) | bool) else '' %}
-                        {% set pretry = ' retry' if llm_parse_retry_used | default(false) | bool else '' %}
-                        {% set line = zone_label ~ ': ' ~ run_minutes ~ ' min (LLM ' ~ lm0 ~ psk ~ pfail ~ pretry ~ ') | HTTP ' ~ zone_llm_http ~ ' | ' ~ snip %}
-                        {% set max_len = 2400 %}
-                        {% if repeat.index == 1 %}
-                        {{ line[:max_len] }}
-                        {% else %}
-                        {{ (prev ~ '\n' ~ line)[:max_len] }}
-                        {% endif %}
             - action: logbook.log
               data:
                 name: AI sequential watering
@@ -1572,6 +1520,8 @@ script:
                                 entity_id: '{{ cfg_next_index }}'
                                 value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
                           else:
+                            - variables:
+                                zone_report_extra: ' (skipped, valve unavailable)'
                             - action: persistent_notification.create
                               data:
                                 title: AI sequential watering — zone skipped
@@ -1581,6 +1531,37 @@ script:
                               data:
                                 entity_id: '{{ cfg_next_index }}'
                                 value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
+        - variables:
+            zone_run_report_line: >-
+              {% if not (zone_prompt_assembly_ok | default(true) | bool) %}
+              • {{ zone_label }}—0a
+              {% elif zone_report_extra | default('', true) | trim | length > 0 %}
+              • {{ zone_label }}—{{ run_minutes | default(0) | int(0) }}v
+              {% else %}
+              {% set rm = run_minutes | default(0) | int(0) %}
+              {% set sfx = '' %}
+              {% if rm < 1 %}
+                {% set sfx = '~' %}
+                {% if zone_probe_recommends_skip | default(false) | bool %}
+                  {% set sfx = sfx ~ 'p' %}
+                {% elif not (llm_minutes_parsed | default(false) | bool) %}
+                  {% set sfx = sfx ~ '!' %}
+                {% endif %}
+              {% endif %}
+              • {{ zone_label }}—{{ rm }}{{ sfx }}
+              {% endif %}
+        - action: input_text.set_value
+          data:
+            entity_id: '{{ cfg_simulate_report }}'
+            value: >-
+              {% set prev = states(cfg_simulate_report) | default('', true) %}
+              {% set line = zone_run_report_line | trim %}
+              {% set max_len = 250 %}
+              {% if repeat.index == 1 %}
+              {{ line[:max_len] }}
+              {% else %}
+              {{ (prev ~ '\n' ~ line)[:max_len] }}
+              {% endif %}
     - choose:
       - conditions:
         - condition: template
@@ -1618,28 +1599,74 @@ script:
             topic: '{{ cfg_mqtt_topic }}'
             payload: "{}"
             retain: true
+    - variables:
+        llm_run_summary: >-
+          {% set raw = states(cfg_simulate_report) | default('', true) | trim %}
+          {% if raw | length < 1 %}
+          No per-zone AI results were recorded.
+          {% else %}
+          {% set ns = namespace(sec=0, watered=0, lines=[]) %}
+          {% for line in raw.split('\n') %}
+            {% set t = line | trim %}
+            {% if t | length > 0 %}
+              {% set ns.lines = ns.lines + [t] %}
+              {% if '—' in t %}
+                {% set rhs = t.split('—', 1)[1] | trim %}
+                {% set mins = rhs | regex_replace('^([0-9]+).*', '\\1') | int(0) %}
+                {% if mins > 0 and 'v' not in rhs and 'a' not in rhs %}
+                  {% set ns.watered = ns.watered + 1 %}
+                  {% set ns.sec = ns.sec + (mins * 60 + 55) %}
+                {% endif %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+          {% if start_index_clamped | int(1) > 1 %}
+          Resumed interrupted run at zone index {{ start_index_clamped }}.
+
+          {% endif %}
+          Per-zone AI decisions:
+
+          {{ ns.lines | join('\n') }}
+
+          Legend:
+          • N — watered N minutes
+          • 0~ — skipped (AI said 0 / below min)
+          • 0~p — probe-skip (soil moisture adequate)
+          • 0~! — parse-fail (LLM reply unreadable)
+          • 0a — assembly-fail (prompt build error)
+          • Nv — valve unavailable (would have watered N min)
+
+          {% if ns.watered > 0 %}
+          {% set h = (ns.sec // 3600) | int %}
+          {% set mi = ((ns.sec % 3600) // 60) | int %}
+          {% if h > 0 %}
+          Estimated wall time about {{ h }} hr {{ mi }} min (watering plus ~55 s between stations).
+          {% elif mi > 0 %}
+          Estimated wall time about {{ mi }} min (watering plus ~55 s between stations).
+          {% else %}
+          Estimated wall time under a minute.
+          {% endif %}
+          {% else %}
+          No stations watered this run (all zones skipped by AI or unavailable valves).
+          {% endif %}
+          {% endif %}
     - action: persistent_notification.create
       data:
-        title: "{{ 'AI sequential watering simulation (dry run)' if simulate_mode else 'AI sequential watering complete' }}"
+        title: "{{ 'AI sequential watering simulation (dry run)' if simulate_mode else 'Sequential watering complete' }}"
         message: >-
           {% if simulate_mode %}
           Ollama model: {{ ollama_chat_model }}
 
-          Baseline plan + per-zone LLM below (Irrigation start/stop services were not called):
-          {{ simulate_summary }}
+          {{ llm_run_summary }}
 
-          Per-zone LLM integer (clamped after parsing each zone):
-          {{ states(cfg_simulate_report) }}
+          Irrigation start/stop services were not called.
 
           AccuWeather context passed to the LLM (truncated):
           {{ (accuweather_forecast_for_llm | default('', true) | string)[:900] }}{% if (accuweather_forecast_for_llm | default('', true) | string | length) > 900 %}…{% endif %}
-
-          Trace helper (legacy global slot unused): {{ llm_http_status }} — {{ llm_raw_snippet }}
           {% else %}
-          Completed sequential AI watering plan.
           Ollama model: {{ ollama_chat_model }}
 
-          LLM plan: {{ llm_clean_text | default('n/a', true) }}
+          {{ llm_run_summary }}
 
           Zone last-cycle times were written to the Logbook (entity: script.ai_sequential_watering) after a short delay so Orbit zone_history sensors could update.
           {% endif %}
