@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 .vscode/
 docs/handoff/
+.DS_Store
