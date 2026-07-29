@@ -187,6 +187,15 @@ script:
             min: 1
             max: 64
             mode: box
+      mobile_notify_service:
+        name: Mobile notify service (optional)
+        description: >-
+          Notify service for phone push on completion (e.g. notify.zlatko_fold_5 or notify.ALL_DEVICES).
+          Leave empty to skip mobile push (persistent notification still created).
+        required: false
+        default: ""
+        selector:
+          text:
       simulate:
         name: Simulate (skip valve watering only)
         required: false
@@ -225,6 +234,7 @@ script:
         cfg_irrigation_start: "{{ irrigation_start_service | default('', true) | trim }}"
         cfg_irrigation_stop: "{{ irrigation_stop_service | default('', true) | trim }}"
         cfg_max_zone_index: "{{ max_zone_index | default(16) | int(16) }}"
+        cfg_mobile_notify: "{{ mobile_notify_service | default('', true) | trim }}"
         cfg_owm_key: >-
           {% set h = cfg_owm_key_helper %}
           {% if h | length > 0 %}
@@ -955,7 +965,8 @@ script:
                 'ha_api_base_url': cfg_ha_api_base,
                 'irrigation_start_service': cfg_irrigation_start,
                 'irrigation_stop_service': cfg_irrigation_stop,
-                'max_zone_index': cfg_max_zone_index
+                'max_zone_index': cfg_max_zone_index,
+                'mobile_notify_service': cfg_mobile_notify
               } | to_json }}
         - action: mqtt.publish
           data:
@@ -1603,70 +1614,111 @@ script:
         llm_run_summary: >-
           {% set raw = states(cfg_simulate_report) | default('', true) | trim %}
           {% if raw | length < 1 %}
-          No per-zone AI results were recorded.
+          No per-zone results recorded.
           {% else %}
-          {% set ns = namespace(sec=0, watered=0, lines=[]) %}
+          {% set ns = namespace(sec=0, watered=0, skipped=0, lines=[]) %}
           {% for line in raw.split('\n') %}
             {% set t = line | trim %}
-            {% if t | length > 0 %}
-              {% set ns.lines = ns.lines + [t] %}
-              {% if '—' in t %}
-                {% set rhs = t.split('—', 1)[1] | trim %}
-                {% set mins = rhs | regex_replace('^([0-9]+).*', '\\1') | int(0) %}
-                {% if mins > 0 and 'v' not in rhs and 'a' not in rhs %}
-                  {% set ns.watered = ns.watered + 1 %}
-                  {% set ns.sec = ns.sec + (mins * 60 + 55) %}
-                {% endif %}
+            {% if t | length > 0 and '—' in t %}
+              {% set label = t.split('—', 1)[0] | regex_replace('^•\\s*', '') | trim %}
+              {% set rhs = t.split('—', 1)[1] | trim %}
+              {% set mins = rhs | regex_replace('^([0-9]+).*', '\\1') | int(0) %}
+              {% if 'v' in rhs %}
+                {% set ns.lines = ns.lines + ['🚫 ' ~ label ~ ' — valve down'] %}
+                {% set ns.skipped = ns.skipped + 1 %}
+              {% elif 'a' in rhs %}
+                {% set ns.lines = ns.lines + ['⚠️ ' ~ label ~ ' — setup error'] %}
+                {% set ns.skipped = ns.skipped + 1 %}
+              {% elif '!' in rhs %}
+                {% set ns.lines = ns.lines + ['⚠️ ' ~ label ~ ' — AI unreadable'] %}
+                {% set ns.skipped = ns.skipped + 1 %}
+              {% elif 'p' in rhs %}
+                {% set ns.lines = ns.lines + ['✅ ' ~ label ~ ' — soil ok'] %}
+                {% set ns.skipped = ns.skipped + 1 %}
+              {% elif mins > 0 %}
+                {% set ns.lines = ns.lines + ['💧 ' ~ label ~ ' — ' ~ mins ~ ' min'] %}
+                {% set ns.watered = ns.watered + 1 %}
+                {% set ns.sec = ns.sec + (mins * 60 + 55) %}
+              {% else %}
+                {% set ns.lines = ns.lines + ['➖ ' ~ label ~ ' — skipped'] %}
+                {% set ns.skipped = ns.skipped + 1 %}
               {% endif %}
             {% endif %}
           {% endfor %}
           {% if start_index_clamped | int(1) > 1 %}
-          Resumed interrupted run at zone index {{ start_index_clamped }}.
+          Resumed at zone {{ start_index_clamped }}.
 
           {% endif %}
-          Per-zone AI decisions:
-
           {{ ns.lines | join('\n') }}
-
-          Legend:
-          • N — watered N minutes
-          • 0~ — skipped (AI said 0 / below min)
-          • 0~p — probe-skip (soil moisture adequate)
-          • 0~! — parse-fail (LLM reply unreadable)
-          • 0a — assembly-fail (prompt build error)
-          • Nv — valve unavailable (would have watered N min)
 
           {% if ns.watered > 0 %}
           {% set h = (ns.sec // 3600) | int %}
           {% set mi = ((ns.sec % 3600) // 60) | int %}
           {% if h > 0 %}
-          Estimated wall time about {{ h }} hr {{ mi }} min (watering plus ~55 s between stations).
+          {% set eta = h ~ 'h ' ~ mi ~ 'm' %}
           {% elif mi > 0 %}
-          Estimated wall time about {{ mi }} min (watering plus ~55 s between stations).
+          {% set eta = mi ~ ' min' %}
           {% else %}
-          Estimated wall time under a minute.
+          {% set eta = '<1 min' %}
           {% endif %}
+          {{ ns.watered }} watered · {{ ns.skipped }} skipped · ~{{ eta }}
           {% else %}
-          No stations watered this run (all zones skipped by AI or unavailable valves).
+          {{ ns.skipped }} skipped · nothing watered
           {% endif %}
+
+          💧 watered · ✅ soil · ➖ skip · ⚠️ error · 🚫 valve
+          {% endif %}
+        watering_notify_title: >-
+          {% set raw = states(cfg_simulate_report) | default('', true) | trim %}
+          {% set ns = namespace(watered=0) %}
+          {% for line in raw.split('\n') %}
+            {% set t = line | trim %}
+            {% if t | length > 0 and '—' in t %}
+              {% set rhs = t.split('—', 1)[1] | trim %}
+              {% set mins = rhs | regex_replace('^([0-9]+).*', '\\1') | int(0) %}
+              {% if mins > 0 and 'v' not in rhs and 'a' not in rhs %}
+                {% set ns.watered = ns.watered + 1 %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+          {% if simulate_mode %}
+          🌱 Dry run · {{ ns.watered }} would water
+          {% elif ns.watered > 0 %}
+          🌱 Watering complete · {{ ns.watered }} zone{{ 's' if ns.watered != 1 else '' }}
+          {% else %}
+          🌱 Watering complete · all skipped
           {% endif %}
     - action: persistent_notification.create
       data:
-        title: "{{ 'AI sequential watering simulation (dry run)' if simulate_mode else 'Sequential watering complete' }}"
+        title: "{{ watering_notify_title }}"
         message: >-
           {% if simulate_mode %}
-          Ollama model: {{ ollama_chat_model }}
+          Model: {{ ollama_chat_model }}
 
           {{ llm_run_summary }}
 
-          Irrigation start/stop services were not called.
-
-          AccuWeather context passed to the LLM (truncated):
-          {{ (accuweather_forecast_for_llm | default('', true) | string)[:900] }}{% if (accuweather_forecast_for_llm | default('', true) | string | length) > 900 %}…{% endif %}
+          Valves were not opened (dry run).
           {% else %}
-          Ollama model: {{ ollama_chat_model }}
+          Model: {{ ollama_chat_model }}
 
           {{ llm_run_summary }}
-
-          Zone last-cycle times were written to the Logbook (entity: script.ai_sequential_watering) after a short delay so Orbit zone_history sensors could update.
           {% endif %}
+    - if:
+      - condition: template
+        value_template: "{{ cfg_mobile_notify | length > 0 }}"
+      then:
+        - action: "{{ cfg_mobile_notify }}"
+          continue_on_error: true
+          data:
+            title: "{{ watering_notify_title }}"
+            message: "{{ llm_run_summary }}"
+            data:
+              # New channel name so Android can create it at high importance
+              # (existing channels keep their first-seen importance forever).
+              channel: HA Watering
+              importance: high
+              ttl: 0
+              priority: high
+              group: ha-watering
+              notification_icon: mdi:sprinkler-variant
+              vibrationPattern: "100, 200, 100, 200"

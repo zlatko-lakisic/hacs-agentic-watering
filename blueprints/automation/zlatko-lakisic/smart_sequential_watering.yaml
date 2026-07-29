@@ -304,6 +304,14 @@ blueprint:
           max: 64
           step: 1
           mode: box
+    mobile_notify_service:
+      name: Mobile notify service (optional)
+      description: >-
+        Phone push on run complete (e.g. notify.zlatko_fold_5 or notify.ALL_DEVICES).
+        Leave empty for persistent notification only.
+      default: ""
+      selector:
+        text:
 
 mode: single
 variables:
@@ -364,3 +372,4 @@ actions:
       irrigation_start_service: !input irrigation_start_service
       irrigation_stop_service: !input irrigation_stop_service
       max_zone_index: !input max_zone_index
+      mobile_notify_service: !input mobile_notify_service
