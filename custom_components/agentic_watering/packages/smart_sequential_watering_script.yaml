@@ -2,8 +2,8 @@ script:
   ai_sequential_watering:
     alias: AI Sequential Watering
     description: >-
-      Generic sequential AI irrigation pipeline: weather APIs, Recorder history, LLM per zone,
-      then irrigation start/stop services. All zones, sensors, helpers, and API endpoints are
+      Generic sequential AI irrigation pipeline: weather APIs, Recorder history, LLM plan for all zones,
+      notify with the plan, then irrigation start/stop per planned zone. All zones, sensors, helpers, and API endpoints are
       passed as script fields (typically from the smart_sequential_watering blueprint).
     fields:
       zones:
@@ -1300,20 +1300,6 @@ script:
                   llm_minutes: 0
                   llm_parse_retry_used: false
                   run_minutes: 0
-              - choose:
-                  - conditions:
-                      - condition: template
-                        value_template: "{{ run_minutes | int(0) < 1 }}"
-                    sequence:
-                      - choose:
-                          - conditions:
-                              - condition: template
-                                value_template: "{{ not simulate_mode }}"
-                            sequence:
-                              - action: input_number.set_value
-                                data:
-                                  entity_id: '{{ cfg_next_index }}'
-                                  value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
           default:
             - variables:
                 zone_llm_payload: >-
@@ -1486,62 +1472,7 @@ script:
                   Zone {{ zone_label }} LLM full response (HTTP {{ zone_llm_http }}, parsed={{ llm_minutes_parsed }}, minutes={{ llm_minutes }}, run={{ run_minutes }}):
                   {{ zone_llm_raw | default('', true) | string }}
 
-            - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ run_minutes | int(0) < 1 }}"
-                sequence:
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ not simulate_mode }}"
-                        sequence:
-                          - action: input_number.set_value
-                            data:
-                              entity_id: '{{ cfg_next_index }}'
-                              value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
-              default:
-                - choose:
-                    - conditions:
-                        - condition: template
-                          value_template: "{{ not simulate_mode }}"
-                      sequence:
-                        - if:
-                            - condition: template
-                              value_template: >-
-                                {{ zone_watering_entity not in ['', none]
-                                   and states(zone_watering_entity) != 'unavailable' }}
-                          then:
-                            - action: '{{ cfg_irrigation_start }}'
-                              data:
-                                entity_id: '{{ zone_watering_entity }}'
-                                minutes: '{{ run_minutes | int(2) }}'
-                            - delay:
-                                hours: 0
-                                minutes: '{{ run_minutes | int(2) }}'
-                                seconds: 10
-                                milliseconds: 0
-                            - action: '{{ cfg_irrigation_stop }}'
-                              data:
-                                entity_id: '{{ zone_watering_entity }}'
-                            - delay:
-                                seconds: 45
-                            - action: input_number.set_value
-                              data:
-                                entity_id: '{{ cfg_next_index }}'
-                                value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
-                          else:
-                            - variables:
-                                zone_report_extra: ' (skipped, valve unavailable)'
-                            - action: persistent_notification.create
-                              data:
-                                title: AI sequential watering — zone skipped
-                                message: >-
-                                  Skipped {{ zone_label }} ({{ zone_entity }}{% if zone_watering_entity != zone_entity %}, tried {{ zone_watering_entity }}{% endif %}); valve state was {{ states(zone_watering_entity) }} (unavailable).
-                            - action: input_number.set_value
-                              data:
-                                entity_id: '{{ cfg_next_index }}'
-                                value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
+            # Phase 1 = plan only (LLM → report). Valves open in phase 2 after notify.
         - variables:
             zone_run_report_line: >-
               {% if not (zone_prompt_assembly_ok | default(true) | bool) %}
@@ -1573,43 +1504,6 @@ script:
               {% else %}
               {{ (prev ~ '\n' ~ line)[:max_len] }}
               {% endif %}
-    - choose:
-      - conditions:
-        - condition: template
-          value_template: "{{ not simulate_mode }}"
-        sequence:
-        - delay:
-            seconds: 25
-        - action: logbook.log
-          data:
-            name: AI sequential watering
-            entity_id: script.ai_sequential_watering
-            message: >-
-              All zones in the sequential plan finished. Zone history last cycle timestamps —
-              {% set ns = namespace(parts=[]) %}
-              {% for z in zones %}
-                {% set bh = z.zone_history_sensor | default('', true) | trim %}
-                {% if bh | length > 0 %}
-                  {% set ns.parts = ns.parts + [z.label ~ ': ' ~ states(bh)] %}
-                {% endif %}
-              {% endfor %}
-              {{ ns.parts | join('; ') if ns.parts | length > 0 else 'no zone_history_sensor configured' }}.
-        - action: input_text.set_value
-          data:
-            entity_id: '{{ cfg_active_run_id }}'
-            value: ""
-        - action: input_boolean.turn_off
-          data:
-            entity_id: '{{ cfg_in_progress }}'
-        - action: input_number.set_value
-          data:
-            entity_id: '{{ cfg_next_index }}'
-            value: 1
-        - action: mqtt.publish
-          data:
-            topic: '{{ cfg_mqtt_topic }}'
-            payload: "{}"
-            retain: true
     - variables:
         llm_run_summary: >-
           {% set raw = states(cfg_simulate_report) | default('', true) | trim %}
@@ -1661,12 +1555,12 @@ script:
           {% else %}
           {% set eta = '<1 min' %}
           {% endif %}
-          {{ ns.watered }} watered · {{ ns.skipped }} skipped · ~{{ eta }}
+          {{ ns.watered }} to water · {{ ns.skipped }} skipped · ~{{ eta }}
           {% else %}
-          {{ ns.skipped }} skipped · nothing watered
+          {{ ns.skipped }} skipped · nothing to water
           {% endif %}
 
-          💧 watered · ✅ soil · ➖ skip · ⚠️ error · 🚫 valve
+          💧 water · ✅ soil · ➖ skip · ⚠️ error · 🚫 valve
           {% endif %}
         watering_notify_title: >-
           {% set raw = states(cfg_simulate_report) | default('', true) | trim %}
@@ -1684,10 +1578,11 @@ script:
           {% if simulate_mode %}
           🌱 Dry run · {{ ns.watered }} would water
           {% elif ns.watered > 0 %}
-          🌱 Watering complete · {{ ns.watered }} zone{{ 's' if ns.watered != 1 else '' }}
+          🌱 Watering plan · {{ ns.watered }} zone{{ 's' if ns.watered != 1 else '' }}
           {% else %}
-          🌱 Watering complete · all skipped
+          🌱 Watering plan · all skipped
           {% endif %}
+    # Notify with the full plan before any valve opens.
     - action: persistent_notification.create
       data:
         title: "{{ watering_notify_title }}"
@@ -1697,11 +1592,13 @@ script:
 
           {{ llm_run_summary }}
 
-          Valves were not opened (dry run).
+          Valves will not be opened (dry run).
           {% else %}
           Model: {{ ollama_chat_model }}
 
           {{ llm_run_summary }}
+
+          Starting valves now from this plan.
           {% endif %}
     - if:
       - condition: template
@@ -1713,8 +1610,6 @@ script:
             title: "{{ watering_notify_title }}"
             message: "{{ llm_run_summary }}"
             data:
-              # New channel name so Android can create it at high importance
-              # (existing channels keep their first-seen importance forever).
               channel: HA Watering
               importance: high
               ttl: 0
@@ -1722,3 +1617,123 @@ script:
               group: ha-watering
               notification_icon: mdi:sprinkler-variant
               vibrationPattern: "100, 200, 100, 200"
+    # Phase 2: open valves from the planned report (skipped in simulate / dry run).
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: "{{ not simulate_mode }}"
+        sequence:
+        - repeat:
+            for_each: '{{ pending_zones }}'
+            sequence:
+            - variables:
+                zone_label: '{{ repeat.item.label }}'
+                zone_entity: '{{ repeat.item.entity_id }}'
+                zone_watering_entity: >-
+                  {% set v = repeat.item.entity_id %}
+                  {% if v[:6] != 'valve.' %}
+                    {{ v }}
+                  {% else %}
+                    {% set s = 'switch.' ~ (v | replace('valve.', '')) %}
+                    {% if states(v) != 'unavailable' %}
+                      {{ v }}
+                    {% elif states(s) != 'unavailable' %}
+                      {{ s }}
+                    {% else %}
+                      {{ v }}
+                    {% endif %}
+                  {% endif %}
+                zone_index: '{{ (start_index_clamped | int(1) + repeat.index - 1) | int }}'
+                run_minutes: >-
+                  {% set want = zone_label | trim %}
+                  {% set raw = states(cfg_simulate_report) | default('', true) | trim %}
+                  {% set ns = namespace(mins=0) %}
+                  {% for line in raw.split('\n') %}
+                    {% set t = line | trim %}
+                    {% if t | length > 0 and '—' in t %}
+                      {% set label = t.split('—', 1)[0] | regex_replace('^•\\s*', '') | trim %}
+                      {% if label == want %}
+                        {% set rhs = t.split('—', 1)[1] | trim %}
+                        {% if 'v' not in rhs and 'a' not in rhs %}
+                          {% set ns.mins = rhs | regex_replace('^([0-9]+).*', '\\1') | int(0) %}
+                        {% endif %}
+                      {% endif %}
+                    {% endif %}
+                  {% endfor %}
+                  {{ ns.mins | int(0) }}
+            - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ run_minutes | int(0) >= 1 }}"
+                sequence:
+                  - if:
+                      - condition: template
+                        value_template: >-
+                          {{ zone_watering_entity not in ['', none]
+                             and states(zone_watering_entity) != 'unavailable' }}
+                    then:
+                      - action: '{{ cfg_irrigation_start }}'
+                        data:
+                          entity_id: '{{ zone_watering_entity }}'
+                          minutes: '{{ run_minutes | int(2) }}'
+                      - delay:
+                          hours: 0
+                          minutes: '{{ run_minutes | int(2) }}'
+                          seconds: 10
+                          milliseconds: 0
+                      - action: '{{ cfg_irrigation_stop }}'
+                        data:
+                          entity_id: '{{ zone_watering_entity }}'
+                      - delay:
+                          seconds: 45
+                      - action: input_number.set_value
+                        data:
+                          entity_id: '{{ cfg_next_index }}'
+                          value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
+                    else:
+                      - action: persistent_notification.create
+                        data:
+                          title: AI sequential watering — zone skipped
+                          message: >-
+                            Skipped {{ zone_label }} ({{ zone_entity }}{% if zone_watering_entity != zone_entity %}, tried {{ zone_watering_entity }}{% endif %}); valve state was {{ states(zone_watering_entity) }} (unavailable).
+                      - action: input_number.set_value
+                        data:
+                          entity_id: '{{ cfg_next_index }}'
+                          value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
+              default:
+                - action: input_number.set_value
+                  data:
+                    entity_id: '{{ cfg_next_index }}'
+                    value: "{{ [zone_index + 1, zone_count | int(1)] | min }}"
+        - delay:
+            seconds: 25
+        - action: logbook.log
+          data:
+            name: AI sequential watering
+            entity_id: script.ai_sequential_watering
+            message: >-
+              All zones in the sequential plan finished. Zone history last cycle timestamps —
+              {% set ns = namespace(parts=[]) %}
+              {% for z in zones %}
+                {% set bh = z.zone_history_sensor | default('', true) | trim %}
+                {% if bh | length > 0 %}
+                  {% set ns.parts = ns.parts + [z.label ~ ': ' ~ states(bh)] %}
+                {% endif %}
+              {% endfor %}
+              {{ ns.parts | join('; ') if ns.parts | length > 0 else 'no zone_history_sensor configured' }}.
+        - action: input_text.set_value
+          data:
+            entity_id: '{{ cfg_active_run_id }}'
+            value: ""
+        - action: input_boolean.turn_off
+          data:
+            entity_id: '{{ cfg_in_progress }}'
+        - action: input_number.set_value
+          data:
+            entity_id: '{{ cfg_next_index }}'
+            value: 1
+        - action: mqtt.publish
+          data:
+            topic: '{{ cfg_mqtt_topic }}'
+            payload: "{}"
+            retain: true
