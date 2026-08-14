@@ -1,0 +1,18 @@
+id: irrigation_soil_bands
+name: Irrigation soil moisture bands
+description: Corrected plant soil targets and session lengths for HA watering.
+good_for: soil moisture, probe targets, watering minutes
+planner_hint: Attach for any zone with soil probes or dry/wet decisions.
+user_goal_keywords:
+  - soil
+  - moisture
+  - probe
+  - dry
+  - water
+content:
+  file: irrigation_soil_bands/instructions.md
+
+inject:
+  target: backstory
+  heading: "## Irrigation soil bands"
+  max_chars: 3500

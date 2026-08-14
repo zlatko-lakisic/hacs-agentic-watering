@@ -1,0 +1,23 @@
+# Weather MCP — session tunnel for irrigation planning.
+id: weather_mcp
+description: >
+  Free weather tools (NOAA/Open-Meteo): summary, forecast, historical, alerts.
+  Prefer precipitation totals and POP for irrigation skip/reduce decisions.
+good_for: weather, forecast, rain, precipitation, alerts
+planner_hint: Call before deciding irrigation minutes; use garden lat/lon.
+user_goal_keywords:
+  - weather
+  - rain
+  - forecast
+  - precipitation
+  - storm
+  - alert
+
+transport: stdio_tunnel
+alias: weather_mcp
+npx_package: "@dangahagan/weather-mcp@latest"
+env:
+  ENABLED_TOOLS: "basic,+historical"
+  WEATHER_UNITS: "metric"
+  LOG_LEVEL: "2"
+guest_allowed: false

@@ -2,10 +2,11 @@
   "domain": "agentic_watering",
   "name": "Agentic Watering",
   "codeowners": ["@zlatko-lakisic"],
+  "config_flow": true,
   "documentation": "https://github.com/zlatko-lakisic/hacs-agentic-watering",
   "integration_type": "service",
-  "iot_class": "calculated",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/zlatko-lakisic/hacs-agentic-watering/issues",
-  "requirements": [],
-  "version": "1.3.0"
+  "requirements": ["aiohttp>=3.9.0", "PyYAML>=6.0"],
+  "version": "1.4.3"
 }

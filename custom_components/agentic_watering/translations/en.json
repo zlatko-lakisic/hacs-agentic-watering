@@ -1,0 +1,44 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Agentic Watering (AO Reach)",
+        "description": "Connect to the Jetson AO engine (:8765). Mint a token with appId agentic-watering. If the engine requires mTLS, paste an enrollment token to pair during setup.",
+        "data": {
+          "engine_url": "AO engine base URL",
+          "api_token": "API token (ao_…)",
+          "enroll_token": "mTLS enrollment token (one-time)",
+          "app_id": "Reach appId",
+          "ttl_seconds": "Session TTL seconds",
+          "use_reach": "Use AO Reach for zone decisions",
+          "enable_weather_mcp": "Enable weather-mcp tunnel",
+          "enabled_agents": "Selected irrigation agents",
+          "latitude": "Garden latitude",
+          "longitude": "Garden longitude"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only one Agentic Watering entry is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Agentic Watering options",
+        "data": {
+          "engine_url": "AO engine base URL",
+          "api_token": "API token (ao_…)",
+          "enroll_token": "mTLS enrollment token (one-time, leave blank to keep pairing)",
+          "app_id": "Reach appId",
+          "ttl_seconds": "Session TTL seconds",
+          "use_reach": "Use AO Reach for zone decisions",
+          "enable_weather_mcp": "Enable weather-mcp tunnel",
+          "enabled_agents": "Selected irrigation agents",
+          "latitude": "Garden latitude",
+          "longitude": "Garden longitude"
+        }
+      }
+    }
+  }
+}

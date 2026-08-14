@@ -1,0 +1,19 @@
+id: irrigation_catalogue_needs
+name: Plant catalogue weekly water needs
+description: WUCOLS-style weekly mm needs for temperate humid US Northeast.
+good_for: weekly water need, plant catalogue, deficit
+planner_hint: Attach when estimating deficit vs rainfall.
+user_goal_keywords:
+  - weekly
+  - mm
+  - catalogue
+  - tomato
+  - corn
+  - lawn
+content:
+  file: irrigation_catalogue_needs/instructions.md
+
+inject:
+  target: backstory
+  heading: "## Catalogue weekly needs"
+  max_chars: 3500

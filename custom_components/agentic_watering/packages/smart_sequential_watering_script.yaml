@@ -1037,21 +1037,21 @@ script:
               {% if ns.probes | length == 0 %}
                 {{ {'has_soil_probe': false} | to_json }}
               {% else %}
-                {% set guide = 'Soil probe is the PRIMARY decision signal (0-100%, higher = wetter). Probe overrides rainfall and deficit estimates when moisture is adequate for plant_profile. Generic bands: very dry <=25% add 3-6 min; dry 26-35% add 1-3 min; comfortable 36-55% REPLY 0 unless plant target says otherwise; moist 56-65% REPLY 0 when within plant target max; wet >=66% always REPLY 0.' %}
+                {% set guide = 'Soil probe is the PRIMARY decision signal (0-100%, higher = wetter). Probe overrides rainfall and deficit estimates when moisture is adequate for plant_profile. Generic bands: very dry <=25% add 15-25 min for high-water veg / 10-18 ornamentals; dry 26-35% add 10-18 min (high-water) / 8-15 ornamentals; below plant target minimum size a full session toward mid-target (typically 12-20 min). Comfortable within plant target REPLY 0; wet >=66% always REPLY 0. Never use 1-6 minute token runs when soil is dry.' %}
                 {% if plants | regex_search('hosta|mint|flower') %}
-                  {% set guide = guide ~ ' Ornamentals (hosta/mint/flowers): target ~40-68%. REPLY 0 when every probe is 40-68%.' %}
+                  {% set guide = guide ~ ' Ornamentals (hosta/mint/flowers): target ~40-68%. REPLY 0 when every probe is 40-68%. Water when driest <40%.' %}
                 {% endif %}
                 {% if plants | regex_search('tomato') %}
-                  {% set guide = guide ~ ' Tomatoes: target ~45-62%. REPLY 0 when every probe is 45-62%. Add only when any probe <32%.' %}
+                  {% set guide = guide ~ ' Tomatoes: target ~45-62% (~25 mm/week). REPLY 0 when every probe is 45-62%. Add a substantial soaker session when any probe <45% (prefer 15-25 min when <32%).' %}
                 {% endif %}
                 {% if plants | regex_search('pepper|kale|basil|parsley') %}
-                  {% set guide = guide ~ ' Peppers/kale/herbs: target ~40-65%. REPLY 0 when every probe is 40-65%. Add only when any probe <30%.' %}
+                  {% set guide = guide ~ ' Peppers/kale/herbs: target ~40-65% (~16 mm/week). REPLY 0 when every probe is 40-65% or wetter. Add when any probe <40%.' %}
                 {% endif %}
                 {% if plants | regex_search('zucchini|eggplant|pea') %}
-                  {% set guide = guide ~ ' Zucchini/eggplant/peas: with multiple probes use the drier reading for add decisions but REPLY 0 if ANY probe >=66% or if wettest probe >=60%. REPLY 0 when driest probe is 48-59% and wettest <60%. Add only when driest probe <30%.' %}
+                  {% set guide = guide ~ ' Zucchini/eggplant/peas: high water (~25 mm/week). Use driest reading for add decisions. REPLY 0 if ANY probe >=66% or wettest >=60%. REPLY 0 when driest is 48-59% and wettest <60%. When driest <48% (especially <30%), run 15-25 min micro — never 1-6 min token runs.' %}
                 {% endif %}
                 {% if plants | regex_search('corn') %}
-                  {% set guide = guide ~ ' Corn: target ~45-62%. REPLY 0 when every probe is 45-62%. Add only when any probe <32%.' %}
+                  {% set guide = guide ~ ' Corn: target ~45-62% (~25 mm/week). REPLY 0 when every probe is 45-62%. When dry prefer 12-20 min soaker.' %}
                 {% endif %}
                 {% if garden_heat_temp_f | float(0) >= 75 %}
                   {% set guide = guide ~ ' Hot weather (garden heat signal >=75F): surface dries faster than probe depth — only add minutes when probes read dry for the plant type; reply 0 when probe >=68% or heavy rain is forecast.' %}
@@ -1101,9 +1101,7 @@ script:
               {{ 'SKIP — reply 0: driest probe ' ~ (mn | round(1)) ~ '% in comfortable 48-59% range.' }}
               {% elif plants | regex_search('corn') and mn >= 45 and mx <= 62 %}
               {{ 'SKIP — reply 0: corn probe(s) within target 45-62%.' }}
-              {% elif mn >= 36 and mx <= 55 %}
-              {{ 'SKIP — reply 0: all probe(s) ' ~ (mn | round(1)) ~ '-' ~ (mx | round(1)) ~ '% in comfortable 36-55% range.' }}
-              {% elif mn >= 56 and mx <= 65 %}
+              {% elif mn >= 55 and mx <= 65 %}
               {{ 'SKIP — reply 0: probe(s) moist but adequate at ' ~ (mn | round(1)) ~ '-' ~ (mx | round(1)) ~ '%.' }}
               {% else %}
               {{ 'WATER OK — driest probe ' ~ (mn | round(1)) ~ '%, wettest ' ~ (mx | round(1)) ~ '%; add minutes only if below plant minimum in adjustment_guide.' }}
@@ -1301,83 +1299,45 @@ script:
                   llm_parse_retry_used: false
                   run_minutes: 0
           default:
-            - variables:
-                zone_llm_payload: >-
-                  {{
-                    {
-                      'model': ollama_chat_model,
-                      'temperature': 0,
-                      'max_tokens': 500,
-                      'stream': false,
-                      'messages': [
-                        {'role': 'system', 'content': zone_llm_system_prompt},
-                        {'role': 'user', 'content': zone_llm_prompt}
-                      ]
-                    } | to_json
-                  }}
-            - service: rest_command.ollama_chat_completions
+            # Prefer AO Reach dynamic chat; fall back to legacy OpenAI-compatible REST.
+            - action: agentic_watering.plan_zone_minutes
               continue_on_error: true
               data:
-                llm_api_url: "{{ cfg_llm_url }}"
-                llm_api_key_helper: "{{ cfg_llm_key_helper }}"
-                payload: '{{ zone_llm_payload }}'
-              response_variable: zone_llm_response
+                zone_label: "{{ zone_label_for_llm }}"
+                zone_entity_id: "{{ zone_entity_for_llm }}"
+                plant_profile: "{{ repeat.item.plant_profile | default('', true) }}"
+                zone_profile_json: "{{ zone_profile_for_llm }}"
+                days_since_last_irrigation: "{{ zone_days_since_last_irrigation | int(0) }}"
+                last_run_duration_minutes: "{{ zone_last_run_duration_minutes | float(0) }}"
+                garden_temp_f: "{{ zone_temp_now_for_llm }}"
+                garden_temp_peak_f: "{{ zone_temp_peak_for_llm }}"
+                soil_context_json: "{{ zone_soil_context_for_llm }}"
+                open_meteo_json: "{{ zone_open_meteo_for_llm }}"
+                weather_context_json: "{{ zone_accuweather_for_llm }}"
+                forecast_json: "{{ zone_owm_forecast_for_llm }}"
+                probe_hint: "{{ zone_probe_skip_recommendation | default('', true) }}"
+              response_variable: zone_reach_plan
             - variables:
-                zone_llm_http: '{{ zone_llm_response.status | default(-1) }}'
-                zone_llm_raw: >-
-                  {% set raw = zone_llm_response.content | default(none) %}
-                  {% set j = raw if raw is mapping else (raw | trim | from_json(default={}) if raw is string and raw | trim else {}) %}
-                  {% if j is mapping and j.choices is defined and j.choices | count > 0 %}
-                    {% set ch = j.choices[0] %}
-                    {% if ch.message is mapping and ch.message.content is defined %}
-                      {{ ch.message.content | string }}
-                    {% elif ch.text is defined %}
-                      {{ ch.text | string }}
-                    {% else %}
-                      {{ '' }}
-                    {% endif %}
-                  {% else %}
-                    {{ raw | string if raw is not none else '' }}
-                  {% endif %}
-                llm_minutes_parsed: >-
-                  {% set s = zone_llm_raw | default('', true) | string %}
-                  {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
-                  {% set ns = namespace(parsed=false) %}
-                  {% for line in s.split('\n') | reverse %}
-                    {% if not ns.parsed %}
-                      {% set t = line | trim %}
-                      {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
-                        {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
-                        {% if tail is match('^\\d+$') %}
-                          {% set ns.parsed = true %}
-                        {% endif %}
-                      {% endif %}
-                    {% endif %}
-                  {% endfor %}
-                  {{ ns.parsed | bool }}
-                llm_minutes: >-
-                  {% set s = zone_llm_raw | default('', true) | string %}
-                  {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
-                  {% set ns = namespace(v=none) %}
-                  {% for line in s.split('\n') | reverse %}
-                    {% if ns.v is none %}
-                      {% set t = line | trim %}
-                      {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
-                        {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
-                        {% if tail is match('^\\d+$') %}
-                          {% set ns.v = tail | int(0) %}
-                        {% endif %}
-                      {% endif %}
-                    {% endif %}
-                  {% endfor %}
-                  {{ 0 if ns.v is none else ([0, [ns.v | int(0), 25] | min] | max) }}
-                llm_parse_retry_used: false
+                reach_ok: >-
+                  {{ zone_reach_plan is mapping
+                     and (zone_reach_plan.get('error', '') | string | length == 0)
+                     and (zone_reach_plan.get('raw_text', '') | string | length > 0
+                          or zone_reach_plan.get('parsed', false) | bool) }}
             - choose:
               - conditions:
                   - condition: template
-                    value_template: >-
-                      {{ not (llm_minutes_parsed | default(false) | bool)
-                         and zone_llm_http | int(-1) == 200 }}
+                    value_template: "{{ reach_ok | default(false) | bool }}"
+                sequence:
+                  - variables:
+                      zone_llm_http: "200"
+                      zone_llm_raw: "{{ zone_reach_plan.raw_text | default('', true) | string }}"
+                      llm_minutes_parsed: "{{ zone_reach_plan.parsed | default(false) | bool }}"
+                      llm_minutes: "{{ zone_reach_plan.minutes | default(0) | int(0) }}"
+                      llm_parse_retry_used: false
+                      zone_reach_question_id: "{{ zone_reach_plan.question_id | default('', true) }}"
+              - conditions:
+                  - condition: template
+                    value_template: "{{ true }}"
                 sequence:
                   - variables:
                       zone_llm_payload: >-
@@ -1389,7 +1349,7 @@ script:
                             'stream': false,
                             'messages': [
                               {'role': 'system', 'content': zone_llm_system_prompt},
-                              {'role': 'user', 'content': zone_llm_prompt ~ '\n\nYour previous reply did not include a valid final line. Restate your reasoning briefly, then end with exactly:\nMINUTES: <integer 0-25>'}
+                              {'role': 'user', 'content': zone_llm_prompt}
                             ]
                           } | to_json
                         }}
@@ -1449,7 +1409,86 @@ script:
                           {% endif %}
                         {% endfor %}
                         {{ 0 if ns.v is none else ([0, [ns.v | int(0), 25] | min] | max) }}
-                      llm_parse_retry_used: true
+                      llm_parse_retry_used: false
+                      zone_reach_question_id: ""
+                  - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: >-
+                            {{ not (llm_minutes_parsed | default(false) | bool)
+                               and zone_llm_http | int(-1) == 200 }}
+                      sequence:
+                        - variables:
+                            zone_llm_payload: >-
+                              {{
+                                {
+                                  'model': ollama_chat_model,
+                                  'temperature': 0,
+                                  'max_tokens': 500,
+                                  'stream': false,
+                                  'messages': [
+                                    {'role': 'system', 'content': zone_llm_system_prompt},
+                                    {'role': 'user', 'content': zone_llm_prompt ~ '\n\nYour previous reply did not include a valid final line. Restate your reasoning briefly, then end with exactly:\nMINUTES: <integer 0-25>'}
+                                  ]
+                                } | to_json
+                              }}
+                        - service: rest_command.ollama_chat_completions
+                          continue_on_error: true
+                          data:
+                            llm_api_url: "{{ cfg_llm_url }}"
+                            llm_api_key_helper: "{{ cfg_llm_key_helper }}"
+                            payload: '{{ zone_llm_payload }}'
+                          response_variable: zone_llm_response
+                        - variables:
+                            zone_llm_http: '{{ zone_llm_response.status | default(-1) }}'
+                            zone_llm_raw: >-
+                              {% set raw = zone_llm_response.content | default(none) %}
+                              {% set j = raw if raw is mapping else (raw | trim | from_json(default={}) if raw is string and raw | trim else {}) %}
+                              {% if j is mapping and j.choices is defined and j.choices | count > 0 %}
+                                {% set ch = j.choices[0] %}
+                                {% if ch.message is mapping and ch.message.content is defined %}
+                                  {{ ch.message.content | string }}
+                                {% elif ch.text is defined %}
+                                  {{ ch.text | string }}
+                                {% else %}
+                                  {{ '' }}
+                                {% endif %}
+                              {% else %}
+                                {{ raw | string if raw is not none else '' }}
+                              {% endif %}
+                            llm_minutes_parsed: >-
+                              {% set s = zone_llm_raw | default('', true) | string %}
+                              {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
+                              {% set ns = namespace(parsed=false) %}
+                              {% for line in s.split('\n') | reverse %}
+                                {% if not ns.parsed %}
+                                  {% set t = line | trim %}
+                                  {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
+                                    {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
+                                    {% if tail is match('^\\d+$') %}
+                                      {% set ns.parsed = true %}
+                                    {% endif %}
+                                  {% endif %}
+                                {% endif %}
+                              {% endfor %}
+                              {{ ns.parsed | bool }}
+                            llm_minutes: >-
+                              {% set s = zone_llm_raw | default('', true) | string %}
+                              {% set s = s | regex_replace('(?s)```(?:json)?\\s*', '') | regex_replace('```', '') | trim %}
+                              {% set ns = namespace(v=none) %}
+                              {% for line in s.split('\n') | reverse %}
+                                {% if ns.v is none %}
+                                  {% set t = line | trim %}
+                                  {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
+                                    {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
+                                    {% if tail is match('^\\d+$') %}
+                                      {% set ns.v = tail | int(0) %}
+                                    {% endif %}
+                                  {% endif %}
+                                {% endif %}
+                              {% endfor %}
+                              {{ 0 if ns.v is none else ([0, [ns.v | int(0), 25] | min] | max) }}
+                            llm_parse_retry_used: true
             - variables:
                 run_minutes: >-
                   {% set lm = llm_minutes | int(0) %}
@@ -1469,7 +1508,7 @@ script:
                 name: AI sequential watering
                 entity_id: script.ai_sequential_watering
                 message: >-
-                  Zone {{ zone_label }} LLM full response (HTTP {{ zone_llm_http }}, parsed={{ llm_minutes_parsed }}, minutes={{ llm_minutes }}, run={{ run_minutes }}):
+                  Zone {{ zone_label }} LLM full response (HTTP {{ zone_llm_http }}, parsed={{ llm_minutes_parsed }}, minutes={{ llm_minutes }}, run={{ run_minutes }}, reach_qid={{ zone_reach_question_id | default('', true) }}):
                   {{ zone_llm_raw | default('', true) | string }}
 
             # Phase 1 = plan only (LLM → report). Valves open in phase 2 after notify.

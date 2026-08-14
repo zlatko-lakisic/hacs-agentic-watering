@@ -1,0 +1,86 @@
+plan_zone_minutes:
+  name: Plan zone watering minutes
+  description: >
+    Ask AO Reach (dynamic chat) how many minutes to water one zone.
+    Returns minutes, run_minutes (after probe-skip clamp), raw_text, question_id.
+  fields:
+    zone_label:
+      name: Zone label
+      example: Tomato
+      selector:
+        text:
+    zone_entity_id:
+      name: Valve entity
+      selector:
+        text:
+    plant_profile:
+      name: Plant profile
+      selector:
+        text:
+    zone_profile_json:
+      name: Zone profile JSON
+      selector:
+        text:
+    soil_context_json:
+      name: Soil context JSON
+      selector:
+        text:
+    open_meteo_json:
+      name: Open-Meteo JSON fallback
+      selector:
+        text:
+    forecast_json:
+      name: Forecast JSON
+      selector:
+        text:
+    weather_context_json:
+      name: Weather context JSON
+      selector:
+        text:
+    probe_hint:
+      name: Probe hint
+      selector:
+        text:
+    days_since_last_irrigation:
+      name: Days since last irrigation
+      selector:
+        number:
+          min: 0
+          max: 60
+    last_run_duration_minutes:
+      name: Last run minutes
+      selector:
+        number:
+          min: 0
+          max: 120
+    mock_reply:
+      name: Mock LLM reply (tests only)
+      selector:
+        text:
+probe_reach:
+  name: Probe AO Reach
+  description: >
+    Start Reach session and report pairing, sessionOverlay and mcpTunnel status.
+refresh_overlay:
+  name: Refresh Reach overlay
+  description: Re-register watering overlay agents and MCPs on the active session.
+pair:
+  name: Pair with AO engine (mTLS)
+  description: >
+    Redeem an AO enrollment token to obtain client mTLS material. Required when the
+    engine reports mtls.required. Mint the token for appId agentic-watering.
+  fields:
+    enroll_token:
+      name: Enrollment token
+      required: true
+      selector:
+        text:
+          type: password
+    client_name:
+      name: Client name (certificate CN)
+      example: agentic-watering
+      selector:
+        text:
+clear_pairing:
+  name: Clear AO pairing
+  description: Delete stored mTLS material and stop the active Reach session.
