@@ -33,6 +33,33 @@ homeassistant:
 
 Reload **Scripts**, **REST commands**, and **Template** entities (or run **Check configuration** then reload YAML).
 
+## 2b. Configure AO Reach (v1.4.0+)
+
+1. On Jetson AO: enable `AGENTIC_SERVE_SESSION_OVERLAY=1` and `AGENTIC_SERVE_MCP_TUNNEL=1`; expose engine `:8765`.
+2. Mint two credentials with **`appId: agentic-watering`** (do not reuse `home-assistant` or `comstar-ha`):
+   - an **API token** (bearer, sent as `Authorization`)
+   - an **mTLS enrollment token** — required when `GET /health` reports `mtls.required: true`
+3. **Settings → Devices & services → Agentic Watering** — set engine URL (e.g. `https://172.16.90.20:8765`), paste both tokens, enable weather-mcp, select agents.
+4. HA host needs **Node/`npx`** for `@dangahagan/weather-mcp`.
+5. Verify: Developer Tools → Services → `agentic_watering.probe_reach` (check `paired: true`).
+6. Pre-deploy: `python scripts/mock_watering_run.py` (see [VERIFICATION.md](VERIFICATION.md)).
+
+### mTLS pairing
+
+The engine presents a self-signed certificate and requires a client certificate; a
+bearer token alone gets **403** on the WebSocket upgrade. The enrollment token is
+redeemed once for client material stored in `config/agentic_watering_mtls_<entry_id>/`
+(`cert.pem`, `key.pem`, `ca.pem`) — the `ca.pem` is also what lets the client trust
+the engine's self-signed server cert.
+
+- Enrollment token is **one-time**: it is consumed at setup and removed from storage.
+- To re-pair later: `agentic_watering.pair` with `enroll_token` (optional `client_name`).
+- To reset: `agentic_watering.clear_pairing`.
+- CSR generation prefers the `openssl` binary and falls back to the `cryptography`
+  package, so it works on HA Core images that ship without `openssl`.
+
+Legacy `rest_command.ollama_chat_completions` remains as automatic fallback if Reach fails.
+
 ## 3. Site instance package (your home only)
 
 Create a local package (not part of this repo) with:

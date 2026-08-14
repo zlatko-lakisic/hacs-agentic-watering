@@ -19,7 +19,8 @@ Before you read the component list, confirm this fits your setup:
 
 - Home Assistant **2024.6.0** or newer
 - [HACS](https://hacs.xyz/) installed
-- An **OpenAI-compatible LLM HTTP API** (chat completions endpoint + API key)
+- **AO Reach** to an Agentic Orchestration engine (`:8765`) with `AGENTIC_SERVE_SESSION_OVERLAY=1` and `AGENTIC_SERVE_MCP_TUNNEL=1`, token `appId: agentic-watering` — **or** a legacy OpenAI-compatible chat-completions URL as fallback
+- Node.js / `npx` on the HA host when enabling the **weather-mcp** tunnel
 - An irrigation integration that exposes **start** and **stop watering** services on valve entities
 
 **Supported irrigation integrations:** anything that provides `domain.start_watering` and `domain.stop_watering` services you can pass into the blueprint — for example **Orbit B-hyve** (`bhyve.start_watering` / `bhyve.stop_watering`). The script calls those services by name; it is not tied to a single vendor.
@@ -27,12 +28,19 @@ Before you read the component list, confirm this fits your setup:
 ## How it works
 
 1. **Trigger** — Sunrise, sunset, or manual run via the blueprint automation.
-2. **Gather context** — OpenWeatherMap + Open-Meteo precipitation, Recorder history for soil sensors and valves, optional weather entity forecast.
-3. **Baseline estimate** — Deterministic minutes per zone from temperature, rain, sun exposure, and soil bands (operator reference only; not what valves run).
-4. **Per-zone LLM call** — Model receives zone profile, probe readings, and history; replies with `0` (skip) or `2–25` minutes. Probe-skip rules can force `0` when soil moisture is already adequate.
-5. **Water one zone** — Start/stop services run sequentially with a short delay between valves (skipped in simulate mode).
-6. **Snapshot state** — `in_progress`, next zone index, and full run config published to MQTT (retained).
-7. **Next zone** — Repeat until the list is done; the **completion notification** lists each zone’s actual AI decision (minutes or skip reason) plus a legend — not the baseline estimate.
+2. **Gather context** — Soil/valve history in HA; optional Open-Meteo/OWM fallback facts.
+3. **Per-zone Reach chat** — `agentic_watering.plan_zone_minutes` runs AO dynamic planning with selected overlay agents (`client.irrigation_planner`, `client.irrigation_zone_specialist`) and optional **weather-mcp** tools; reply ends with `MINUTES: 0–25`. Probe-skip rules can force `0`. Falls back to legacy chat-completions if Reach fails.
+4. **Water one zone** — Start/stop services run sequentially with a short delay between valves (skipped in simulate mode).
+5. **Snapshot state** — MQTT retained run config for resume-after-restart.
+
+### Tests
+
+```bash
+python -m unittest tests/test_probe_heuristics.py tests/test_scenario_matrix.py -v
+python scripts/mock_watering_run.py          # pre-deploy, no valves
+python scripts/verify_live_watering.py --dry-print
+```
+
 
 <p align="center">
   <img src="images/blueprint-import.png" alt="Home Assistant blueprint import — Smart sequential watering" width="640">
