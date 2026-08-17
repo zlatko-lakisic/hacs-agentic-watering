@@ -89,7 +89,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install test dependencies
+        run: pip install -r tests/requirements.txt
+
       - name: Run unit tests and mock watering matrix
         run: |
-          python -m unittest tests/test_parse_irrigation_minutes.py tests/test_prompt_assembly.py tests/test_probe_heuristics.py tests/test_scenario_matrix.py tests/test_mock_reach.py -v
+          python -m unittest tests/test_parse_irrigation_minutes.py tests/test_prompt_assembly.py tests/test_probe_heuristics.py tests/test_scenario_matrix.py tests/test_mock_reach.py tests/test_script_minutes_jinja.py tests/test_overlay_and_mtls.py -v
           python scripts/mock_watering_run.py

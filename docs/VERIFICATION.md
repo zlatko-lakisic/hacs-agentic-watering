@@ -3,10 +3,46 @@
 ## Pre-deploy (no valves)
 
 ```bash
-python -m unittest tests/test_probe_heuristics.py tests/test_scenario_matrix.py -v
+python -m unittest tests/test_probe_heuristics.py tests/test_scenario_matrix.py \
+    tests/test_parse_irrigation_minutes.py tests/test_script_minutes_jinja.py -v
 python scripts/mock_watering_run.py
 python tests/validate_yaml_packages.py
 ```
+
+`test_script_minutes_jinja.py` renders the answer-parsing templates lifted out of
+the script package instead of a Python mirror of them, because a mirror-only
+suite stayed green while production discarded correct answers.
+
+## Answer parsing check (after any prompt or parser change)
+
+Renders those same templates through the running instance, so the result uses
+Home Assistant's own filter semantics:
+
+```bash
+python scripts/verify_minutes_template.py --ha-url http://192.168.89.25:8123 --token <LONG_LIVED>
+```
+
+Every case must pass. Models emphasise the final line (`**MINUTES: 20**`,
+`**MINUTES:** 12`) often enough that a parser accepting only a bare
+`MINUTES: 20` will silently skip zones it was told to water.
+
+## Reading the per-zone run report
+
+`input_text.ai_watering_simulate_report` records one compact line per zone;
+the suffix says why a zone got zero:
+
+| Line | Meaning |
+| :--- | :--- |
+| `• Tomato—18` | ran (or planned) 18 minutes |
+| `• East Lawn—0~` | AI answered 0 — nothing needed |
+| `• Peppers and Kale—0~p` | soil probe already in band, AI not consulted |
+| `• Zucchini—0~!` | **AI reply unreadable** — answer discarded, zone skipped |
+| `• Corn—0v` | valve unavailable |
+| `• Corn—0a` | prompt assembly failed |
+
+A `~!` is a bug in parsing or prompting, never a watering decision — check the
+`LLM full response` logbook entry for that zone and compare its final line
+against `scripts/verify_minutes_template.py`.
 
 ## Live Reach check (no valves)
 

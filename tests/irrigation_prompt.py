@@ -38,6 +38,7 @@ SYSTEM_PROMPT_LINES = [
     "",
     "Output format: your reasoning in at most 120 words, then a final line exactly:",
     "MINUTES: <integer 0-25>",
+    "Write that final line as plain text — no asterisks, bold, headings or other markdown around it.",
 ]
 
 SYSTEM_PROMPT = "\n".join(SYSTEM_PROMPT_LINES)
@@ -47,7 +48,7 @@ UNRENDERED_TEMPLATE_RE = re.compile(r"\{\{")
 
 
 def build_system_prompt(*, has_soil_probe: bool = False) -> str:
-    lines = list(SYSTEM_PROMPT_LINES[:-3])
+    lines = list(SYSTEM_PROMPT_LINES[:-4])
     if has_soil_probe:
         lines.extend(
             [
@@ -59,7 +60,7 @@ def build_system_prompt(*, has_soil_probe: bool = False) -> str:
                 "- A heuristic probe hint may appear in the user message; treat strong SKIP hints as MINUTES: 0.",
             ]
         )
-    lines.extend(SYSTEM_PROMPT_LINES[-3:])
+    lines.extend(SYSTEM_PROMPT_LINES[-4:])
     return "\n".join(lines)
 
 
@@ -124,21 +125,28 @@ def numbered_steps_on_separate_lines(system_prompt: str) -> bool:
     return True
 
 
+def normalize_answer_line(line: str) -> str:
+    """Strip markdown decoration so emphasised answers still parse.
+
+    Mirrors the Jinja normalisation in smart_sequential_watering_script.yaml.
+    """
+    return re.sub(r"[*_`]+", "", re.sub(r"^[#>\s]+", "", line)).strip()
+
+
 def parse_minutes(raw: str) -> tuple[bool, int]:
     """Parse last MINUTES: line; returns (parsed_ok, minutes)."""
     text = re.sub(r"(?s)```(?:json)?\s*", "", raw)
     text = text.replace("```", "").strip()
     for line in reversed(text.splitlines()):
-        line = line.strip()
-        if not line:
+        t = normalize_answer_line(line)
+        if not t:
             continue
-        head, _, tail = line.partition(":")
-        if head.strip().upper() != "MINUTES":
+        head, sep, tail = t.partition(":")
+        if not sep or head.strip().upper() != "MINUTES":
             continue
-        tail = tail.strip()
-        if re.fullmatch(r"\d+", tail):
-            value = int(tail)
-            return True, max(0, min(value, 25))
+        m = re.match(r"\d{1,4}", tail.strip())
+        if m:
+            return True, max(0, min(int(m.group(0)), 25))
     return False, 0
 
 
