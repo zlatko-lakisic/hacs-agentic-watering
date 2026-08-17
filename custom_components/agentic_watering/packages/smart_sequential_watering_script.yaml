@@ -376,6 +376,39 @@ script:
               MQTT topic, API helpers/URLs, or irrigation services). Configure them in the blueprint automation.
         - stop: Incomplete watering configuration from blueprint
     - variables:
+        cfg_health_url: >-
+          {% set base = cfg_llm_url | regex_replace('/v1/chat/completions/?$', '') %}
+          {{ base }}/api/v1/health/chat-completions
+    - action: rest_command.ao_chat_completions_health
+      continue_on_error: true
+      data:
+        health_url: "{{ cfg_health_url }}"
+      response_variable: ao_chat_health
+    - variables:
+        ao_llm_ready: >-
+          {% set raw = ao_chat_health.content | default(none) %}
+          {% set j = raw if raw is mapping else (raw | trim | from_json(default={}) if raw is string and raw | trim else {}) %}
+          {{ j.get('ok', false) | bool if j is mapping else false }}
+    - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ not (ao_llm_ready | default(false) | bool) }}"
+        sequence:
+          - action: logbook.log
+            data:
+              name: AI sequential watering
+              entity_id: script.ai_sequential_watering
+              message: >-
+                Preflight failed: AO chat-completions upstream not ready ({{ cfg_health_url }}).
+                Aborting run to avoid 502 on every zone.
+          - action: persistent_notification.create
+            data:
+              title: AI watering aborted — Ollama not ready
+              message: >-
+                Chat-completions health check failed. Wait for Jetson deploy to finish, then retry.
+                URL: {{ cfg_health_url }}
+          - stop: AO chat-completions upstream not ready
+    - variables:
         zones: "{{ zones_configured }}"
         ecowitt_temp: '{{ states(cfg_garden_temperature_sensor) }}'
         ecowitt_dewpoint: >-
@@ -1346,7 +1379,7 @@ script:
                           {
                             'model': ollama_chat_model,
                             'temperature': 0,
-                            'max_tokens': 500,
+                            'max_tokens': 400,
                             'stream': false,
                             'messages': [
                               {'role': 'system', 'content': zone_llm_system_prompt},
@@ -1425,7 +1458,7 @@ script:
                                 {
                                   'model': ollama_chat_model,
                                   'temperature': 0,
-                                  'max_tokens': 500,
+                                  'max_tokens': 400,
                                   'stream': false,
                                   'messages': [
                                     {'role': 'system', 'content': zone_llm_system_prompt},
