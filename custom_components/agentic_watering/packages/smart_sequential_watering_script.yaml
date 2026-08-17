@@ -1236,7 +1236,8 @@ script:
               {% set lines = lines + [
                 "",
                 "Output format: your reasoning in at most 120 words, then a final line exactly:",
-                "MINUTES: <integer 0-25>"
+                "MINUTES: <integer 0-25>",
+                "Write that final line as plain text — no asterisks, bold, headings or other markdown around it."
               ] %}
               {{ lines | join('\n') }}
             zone_llm_prompt: >-
@@ -1383,10 +1384,10 @@ script:
                         {% set ns = namespace(parsed=false) %}
                         {% for line in s.split('\n') | reverse %}
                           {% if not ns.parsed %}
-                            {% set t = line | trim %}
+                            {% set t = line | regex_replace('^[#>\\s]+', '') | regex_replace('[*_`]+', '') | trim %}
                             {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
                               {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
-                              {% if tail is match('^\\d+$') %}
+                              {% if tail is match('^\\d+') %}
                                 {% set ns.parsed = true %}
                               {% endif %}
                             {% endif %}
@@ -1399,11 +1400,11 @@ script:
                         {% set ns = namespace(v=none) %}
                         {% for line in s.split('\n') | reverse %}
                           {% if ns.v is none %}
-                            {% set t = line | trim %}
+                            {% set t = line | regex_replace('^[#>\\s]+', '') | regex_replace('[*_`]+', '') | trim %}
                             {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
                               {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
-                              {% if tail is match('^\\d+$') %}
-                                {% set ns.v = tail | int(0) %}
+                              {% if tail is match('^\\d+') %}
+                                {% set ns.v = tail | regex_replace('^(\\d{1,4}).*$', '\\1') | int(0) %}
                               {% endif %}
                             {% endif %}
                           {% endif %}
@@ -1462,10 +1463,10 @@ script:
                               {% set ns = namespace(parsed=false) %}
                               {% for line in s.split('\n') | reverse %}
                                 {% if not ns.parsed %}
-                                  {% set t = line | trim %}
+                                  {% set t = line | regex_replace('^[#>\\s]+', '') | regex_replace('[*_`]+', '') | trim %}
                                   {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
                                     {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
-                                    {% if tail is match('^\\d+$') %}
+                                    {% if tail is match('^\\d+') %}
                                       {% set ns.parsed = true %}
                                     {% endif %}
                                   {% endif %}
@@ -1478,11 +1479,11 @@ script:
                               {% set ns = namespace(v=none) %}
                               {% for line in s.split('\n') | reverse %}
                                 {% if ns.v is none %}
-                                  {% set t = line | trim %}
+                                  {% set t = line | regex_replace('^[#>\\s]+', '') | regex_replace('[*_`]+', '') | trim %}
                                   {% if t | length > 0 and (t.split(':')[0] | trim | upper) == 'MINUTES' %}
                                     {% set tail = t.split(':', 1)[1] | default('', true) | trim %}
-                                    {% if tail is match('^\\d+$') %}
-                                      {% set ns.v = tail | int(0) %}
+                                    {% if tail is match('^\\d+') %}
+                                      {% set ns.v = tail | regex_replace('^(\\d{1,4}).*$', '\\1') | int(0) %}
                                     {% endif %}
                                   {% endif %}
                                 {% endif %}

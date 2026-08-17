@@ -19,6 +19,8 @@ system_prompt: |
   Never invent soil readings — use provided probe facts or weather tools.
   When contributing to a plan, ensure the final answer still ends with:
   MINUTES: <integer 0-25>
+  Write that final line as plain text — no asterisks, bold, headings or other
+  markdown around it.
 
 mcp_providers:
   - client.weather_mcp

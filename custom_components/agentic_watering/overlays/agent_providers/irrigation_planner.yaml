@@ -30,6 +30,8 @@ system_prompt: |
 
   Output at most 120 words of reasoning, then a final line exactly:
   MINUTES: <integer 0-25>
+  Write that final line as plain text — no asterisks, bold, headings or other
+  markdown around it.
 
 mcp_providers:
   - client.weather_mcp
