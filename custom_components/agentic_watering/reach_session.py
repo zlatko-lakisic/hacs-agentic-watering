@@ -117,6 +117,7 @@ class WateringReachSession:
             text=text,
             run_mode="dynamic",
             selected_agent_provider_ids=agents,
+            priority="high",
             timeout=timeout,
         )
 
