@@ -259,19 +259,23 @@ script:
           {% if raw is sequence and raw is not string and raw | length > 0 %}
             {% set ns = namespace(items=[]) %}
             {% for z in raw %}
-              {% set ns.items = ns.items + [{
-                'label': z.label | default('', true) | trim,
-                'entity_id': z.entity_id | default('', true) | trim,
-                'zone_history_sensor': (z.zone_history_sensor | default(z.bhyve_zone_history_sensor, true) | default('', true) | trim),
-                'area_sqm': z.area_sqm | default(none, true),
-                'sun_exposure': z.sun_exposure | default('', true),
-                'plant_profile': z.plant_profile | default('', true),
-                'irrigation_hardware': z.irrigation_hardware | default('', true),
-                'estimated_flow_gpm': z.estimated_flow_gpm | default('', true),
-                'notes': z.notes | default('', true),
-                'soil_sensor': z.soil_sensor | default('', true) | trim,
-                'soil_sensor_secondary': z.soil_sensor_secondary | default('', true) | trim
-              }] %}
+              {% set enabled_e = z.enabled_entity | default('', true) | trim %}
+              {% if enabled_e | length == 0 or is_state(enabled_e, 'on') %}
+                {% set ns.items = ns.items + [{
+                  'label': z.label | default('', true) | trim,
+                  'entity_id': z.entity_id | default('', true) | trim,
+                  'zone_history_sensor': (z.zone_history_sensor | default(z.bhyve_zone_history_sensor, true) | default('', true) | trim),
+                  'area_sqm': z.area_sqm | default(none, true),
+                  'sun_exposure': z.sun_exposure | default('', true),
+                  'plant_profile': z.plant_profile | default('', true),
+                  'irrigation_hardware': z.irrigation_hardware | default('', true),
+                  'estimated_flow_gpm': z.estimated_flow_gpm | default('', true),
+                  'notes': z.notes | default('', true),
+                  'soil_sensor': z.soil_sensor | default('', true) | trim,
+                  'soil_sensor_secondary': z.soil_sensor_secondary | default('', true) | trim,
+                  'enabled_entity': enabled_e
+                }] %}
+              {% endif %}
             {% endfor %}
             {{ ns.items }}
           {% else %}
