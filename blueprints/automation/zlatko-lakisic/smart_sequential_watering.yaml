@@ -83,6 +83,16 @@ blueprint:
                 entity:
                   filter:
                     - domain: sensor
+            enabled_entity:
+              label: Zone enable switch (optional)
+              description: >-
+                input_boolean (or switch) that must be on for agentic watering to include this zone.
+                Off = skipped for LLM planning and valve runs.
+              selector:
+                entity:
+                  filter:
+                    - domain: input_boolean
+                    - domain: switch
     latitude:
       name: Latitude
       description: Coordinates for OpenWeatherMap and Open-Meteo.
